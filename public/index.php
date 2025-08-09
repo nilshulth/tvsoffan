@@ -2,6 +2,7 @@
 
 use App\Database;
 use App\User;
+use App\TmdbService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
@@ -68,6 +69,23 @@ $app->post('/login', function (Request $request, Response $response) {
 $app->post('/logout', function (Request $request, Response $response) {
     session_destroy();
     return $response->withStatus(302)->withHeader('Location', '/');
+});
+
+$app->get('/api/search', function (Request $request, Response $response) {
+    if (!isset($_SESSION['user_id'])) {
+        return $response->withStatus(401)->withJson(['error' => 'Unauthorized']);
+    }
+
+    $query = $request->getQueryParams()['q'] ?? '';
+    if (empty($query)) {
+        return $response->withJson(['results' => []]);
+    }
+
+    $tmdb = new TmdbService();
+    $results = $tmdb->searchMulti($query);
+
+    $response->getBody()->write(json_encode($results));
+    return $response->withHeader('Content-Type', 'application/json');
 });
 
 function getLoginHtml(): string
@@ -157,6 +175,7 @@ function getDashboardHtml(array $user): string
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>tvsoffan - Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="max-w-4xl mx-auto py-8 px-4">
@@ -170,11 +189,87 @@ function getDashboardHtml(array $user): string
             </div>
         </header>
         
-        <div class="bg-white rounded-lg shadow p-6">
-            <h2 class="text-xl font-semibold mb-4">Välkommen!</h2>
-            <p class="text-gray-600">Du är nu inloggad. Här kommer vi att bygga funktioner för att logga filmer och tv-serier.</p>
+        <div class="bg-white rounded-lg shadow p-6 mb-6" x-data="searchApp()">
+            <h2 class="text-xl font-semibold mb-4">Sök filmer och TV-serier</h2>
+            
+            <div class="mb-4">
+                <input 
+                    type="text" 
+                    x-model="searchQuery"
+                    @input="search()"
+                    placeholder="Sök efter filmer eller TV-serier..."
+                    class="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                >
+            </div>
+            
+            <div x-show="loading" class="text-center py-4">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+            
+            <div x-show="results.length > 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <template x-for="item in results" :key="item.id">
+                    <div class="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div class="flex">
+                            <img 
+                                :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
+                                :alt="item.title || item.name"
+                                class="w-16 h-24 object-cover rounded mr-4 flex-shrink-0"
+                                onerror="this.src=\'/placeholder.png\'"
+                            >
+                            <div class="flex-1 min-w-0">
+                                <h3 class="font-semibold text-sm mb-1 truncate" x-text="item.title || item.name"></h3>
+                                <p class="text-xs text-gray-500 mb-1" x-text="item.release_date || item.first_air_date || \'Okänt datum\'"></p>
+                                <p class="text-xs text-gray-400 mb-2" x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></p>
+                                <button 
+                                    class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                                    @click="addToWatched(item)"
+                                >
+                                    Lägg till
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <div x-show="searchQuery && results.length === 0 && !loading" class="text-center py-4 text-gray-500">
+                Inga resultat hittades för "<span x-text="searchQuery"></span>"
+            </div>
         </div>
     </div>
+
+    <script>
+        function searchApp() {
+            return {
+                searchQuery: \'\',
+                results: [],
+                loading: false,
+                
+                async search() {
+                    if (this.searchQuery.length < 2) {
+                        this.results = [];
+                        return;
+                    }
+                    
+                    this.loading = true;
+                    try {
+                        const response = await fetch(`/api/search?q=${encodeURIComponent(this.searchQuery)}`);
+                        const data = await response.json();
+                        this.results = data.results || [];
+                    } catch (error) {
+                        console.error(\'Search error:\', error);
+                        this.results = [];
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                addToWatched(item) {
+                    alert(`Would add "${item.title || item.name}" to watched list`);
+                }
+            }
+        }
+    </script>
 </body>
 </html>';
 }
