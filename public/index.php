@@ -418,7 +418,7 @@ function getSharedHeaderHtml(array $user, bool $showSearch = true): string
                     
                     <div x-show="searchQuery && results.length > 0" class="absolute top-full left-0 mt-2 w-full bg-white rounded-lg shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50">
                         <template x-for="item in results" :key="item.id">
-                            <div class="flex items-center space-x-3 p-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
+                            <div @click="viewTitle(item)" class="flex items-center space-x-3 p-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 cursor-pointer">
                                 <img 
                                     :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
                                     :alt="item.title || item.name"
@@ -427,20 +427,10 @@ function getSharedHeaderHtml(array $user, bool $showSearch = true): string
                                 >
                                 <div class="flex-1 min-w-0">
                                     <p class="text-sm font-medium text-gray-900 truncate" x-text="item.title || item.name"></p>
-                                    <p class="text-xs text-gray-400 mb-2" x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></p>
-                                    <div class="space-y-1">
-                                        <button 
-                                            class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 w-full"
-                                            @click="addToWatched(item)"
-                                        >
-                                            Lägg till
-                                        </button>
-                                        <button 
-                                            class="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700 w-full"
-                                            @click="viewTitle(item)"
-                                        >
-                                            Visa
-                                        </button>
+                                    <div class="flex items-center space-x-2 text-xs text-gray-500">
+                                        <span x-text="item.release_date ? new Date(item.release_date).getFullYear() : (item.first_air_date ? new Date(item.first_air_date).getFullYear() : \'Okänt år\')"></span>
+                                        <span>•</span>
+                                        <span x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></span>
                                     </div>
                                 </div>
                             </div>
@@ -519,8 +509,42 @@ function getSharedScriptJs(): string
                     this.results = [];
                 },
                 
-                viewTitle(item) {
-                    window.location.href = \'/title/\' + item.id;
+                async viewTitle(item) {
+                    if (!this.userLists) {
+                        await this.loadUserLists();
+                    }
+                    
+                    const defaultList = this.userLists.find(list => list.is_default == 1 && list.is_watched_list == 0);
+                    if (!defaultList) {
+                        alert(\'Du har ingen standardlista för att lägga till titlar\');
+                        return;
+                    }
+                    
+                    const requestBody = {
+                        list_id: defaultList.id,
+                        state: \'want\'
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/titles/\' + item.id + \'/\' + (item.media_type || \'movie\') + \'/add-to-list\', {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok && data.title_id) {
+                            window.location.href = \'/title/\' + data.title_id;
+                        } else {
+                            alert(\'Kunde inte visa titel: \' + (data.error || \'Okänt fel\'));
+                        }
+                    } catch (error) {
+                        console.error(\'View title error:\', error);
+                        alert(\'Något gick fel när titeln skulle visas\');
+                    }
                 },
                 
                 async addToWatched(item) {
