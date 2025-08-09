@@ -13,30 +13,27 @@ class ListItem
         $this->pdo = Database::getConnection();
     }
 
-    public function addToList(int $listId, int $titleId, int $addedBy, string $state = 'want', ?int $rating = null, string $comment = ''): bool
+    public function addToList(int $listId, int $titleId): bool
     {
         $existing = $this->findByListAndTitle($listId, $titleId);
         if ($existing) {
-            return $this->update($existing['id'], $state, $rating, $comment);
+            return true; // Already in list
         }
 
         $stmt = $this->pdo->prepare(
-            "INSERT INTO list_items (list_id, title_id, state, rating, comment, added_by) 
-             VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT IGNORE INTO list_items (list_id, title_id) 
+             VALUES (?, ?)"
         );
         
-        return $stmt->execute([$listId, $titleId, $state, $rating, $comment, $addedBy]);
+        return $stmt->execute([$listId, $titleId]);
     }
 
+    // This method is no longer needed as state is handled by UserTitle class
+    // Keeping for backward compatibility during migration
     public function update(int $listItemId, string $state, ?int $rating = null, string $comment = ''): bool
     {
-        $stmt = $this->pdo->prepare(
-            "UPDATE list_items 
-             SET state = ?, rating = ?, comment = ?, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = ?"
-        );
-        
-        return $stmt->execute([$state, $rating, $comment, $listItemId]);
+        // This functionality is now handled by UserTitle::setState()
+        return true;
     }
 
     public function findByListAndTitle(int $listId, int $titleId): ?array
@@ -48,25 +45,38 @@ class ListItem
         return $stmt->fetch() ?: null;
     }
 
-    public function getListItems(int $listId, ?string $state = null): array
+    public function getListItems(int $listId, ?string $state = null, ?int $userId = null): array
     {
-        $sql = "SELECT li.*, t.*, u.name as added_by_name
-                FROM list_items li
-                JOIN titles t ON li.title_id = t.id
-                JOIN users u ON li.added_by = u.id
-                WHERE li.list_id = ?";
-        
-        $params = [$listId];
-        
-        if ($state) {
-            $sql .= " AND li.state = ?";
-            $params[] = $state;
+        if ($state && $userId) {
+            // Join with user_titles to filter by state
+            $sql = "SELECT li.*, t.*, ut.state, ut.rating, ut.comment, ut.updated_at as user_updated_at
+                    FROM list_items li
+                    JOIN titles t ON li.title_id = t.id
+                    LEFT JOIN user_titles ut ON t.id = ut.title_id AND ut.user_id = ?
+                    WHERE li.list_id = ? AND (ut.state = ? OR ut.state IS NULL)
+                    ORDER BY li.created_at DESC";
+            
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([$userId, $listId, $state]);
+        } else {
+            // Just get list items with optional user state info
+            $sql = "SELECT li.*, t.*";
+            if ($userId) {
+                $sql .= ", ut.state, ut.rating, ut.comment, ut.updated_at as user_updated_at";
+            }
+            $sql .= " FROM list_items li
+                    JOIN titles t ON li.title_id = t.id";
+            if ($userId) {
+                $sql .= " LEFT JOIN user_titles ut ON t.id = ut.title_id AND ut.user_id = ?";
+            }
+            $sql .= " WHERE li.list_id = ?
+                    ORDER BY li.created_at DESC";
+            
+            $params = $userId ? [$userId, $listId] : [$listId];
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute($params);
         }
         
-        $sql .= " ORDER BY li.created_at DESC";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 
@@ -99,14 +109,9 @@ class ListItem
 
     public function markAsWatched(int $titleId, int $userId, ?int $rating = null, string $comment = ''): bool
     {
-        $listModel = new ListModel();
-        $watchedList = $listModel->getUserWatchedList($userId);
-        
-        if (!$watchedList) {
-            throw new \RuntimeException("User doesn't have a watched list");
-        }
-
-        return $this->addToList($watchedList['id'], $titleId, $userId, 'watched', $rating, $comment);
+        // This functionality is now handled by UserTitle::setState()
+        $userTitle = new UserTitle();
+        return $userTitle->setState($userId, $titleId, 'watched', $rating, $comment);
     }
 
     public function removeFromList(int $listId, int $titleId): bool

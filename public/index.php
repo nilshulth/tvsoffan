@@ -6,6 +6,7 @@ use App\TmdbService;
 use App\ListModel;
 use App\Title;
 use App\ListItem;
+use App\UserTitle;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
@@ -144,14 +145,19 @@ $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $
         $title = new Title();
         $titleId = $title->createFromTmdb($tmdbData);
 
+        // Add to list (simplified - just list membership)
         $listItem = new ListItem();
-        $success = $listItem->addToList($listId, $titleId, $_SESSION['user_id'], $state, $rating, $comment);
+        $listSuccess = $listItem->addToList($listId, $titleId);
 
-        if ($success) {
+        // Set user title state (separate from list membership)
+        $userTitle = new UserTitle();
+        $stateSuccess = $userTitle->setState($_SESSION['user_id'], $titleId, $state, $rating, $comment);
+
+        if ($listSuccess && $stateSuccess) {
             $response->getBody()->write(json_encode(['success' => true, 'title_id' => $titleId]));
             return $response->withHeader('Content-Type', 'application/json');
         } else {
-            $response->getBody()->write(json_encode(['error' => 'Failed to add to list']));
+            $response->getBody()->write(json_encode(['error' => 'Failed to add to list or set state']));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
 
@@ -188,14 +194,15 @@ $app->post('/api/titles/update/{title_id}', function (Request $request, Response
             return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
         }
 
-        $listItem = new ListItem();
-        $success = $listItem->addToList($listId, $titleId, $_SESSION['user_id'], $state, $rating, $comment);
+        // Update user title state (no longer tied to specific list)
+        $userTitle = new UserTitle();
+        $success = $userTitle->setState($_SESSION['user_id'], $titleId, $state, $rating, $comment);
 
         if ($success) {
             $response->getBody()->write(json_encode(['success' => true]));
             return $response->withHeader('Content-Type', 'application/json');
         } else {
-            $response->getBody()->write(json_encode(['error' => 'Failed to update list']));
+            $response->getBody()->write(json_encode(['error' => 'Failed to update title state']));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
 
@@ -215,8 +222,12 @@ $app->get('/api/titles/{title_id}/status', function (Request $request, Response 
     $titleId = (int)$args['title_id'];
 
     try {
+        // Get user's title state and which lists contain this title
+        $userTitle = new UserTitle();
+        $userState = $userTitle->getUserTitleState($_SESSION['user_id'], $titleId);
+        
         $stmt = Database::getConnection()->prepare(
-            "SELECT li.*, l.name as list_name, l.id as list_id, l.is_watched_list
+            "SELECT l.name as list_name, l.id as list_id
              FROM list_items li
              JOIN lists l ON li.list_id = l.id
              JOIN list_owners lo ON l.id = lo.list_id
@@ -224,7 +235,20 @@ $app->get('/api/titles/{title_id}/status', function (Request $request, Response 
              ORDER BY l.name"
         );
         $stmt->execute([$titleId, $_SESSION['user_id']]);
-        $status = $stmt->fetchAll();
+        $lists = $stmt->fetchAll();
+        
+        // Combine user state with list information
+        $status = [];
+        foreach ($lists as $list) {
+            $status[] = [
+                'list_id' => $list['list_id'],
+                'list_name' => $list['list_name'],
+                'state' => $userState['state'] ?? 'want',
+                'rating' => $userState['rating'] ?? null,
+                'comment' => $userState['comment'] ?? '',
+                'is_watched_list' => 0 // No longer exists
+            ];
+        }
 
         $response->getBody()->write(json_encode(['status' => $status]));
         return $response->withHeader('Content-Type', 'application/json');
@@ -301,8 +325,7 @@ $app->post('/api/lists', function (Request $request, Response $response) {
             $_SESSION['user_id'],
             $data['description'] ?? '',
             $data['visibility'] ?? 'private',
-            $data['is_default'] ?? false,
-            false // is_watched_list = false
+            $data['is_default'] ?? false
         );
 
         $response->getBody()->write(json_encode([
@@ -334,7 +357,7 @@ $app->get('/api/lists/{list_id}/items', function (Request $request, Response $re
     }
 
     $listItem = new ListItem();
-    $items = $listItem->getListItems($listId, $state);
+    $items = $listItem->getListItems($listId, $state, $_SESSION['user_id']);
 
     $response->getBody()->write(json_encode(['items' => $items]));
     return $response->withHeader('Content-Type', 'application/json');
@@ -495,7 +518,14 @@ function getSharedScriptJs(): string
                     try {
                         const response = await fetch(\'/api/search?q=\' + encodeURIComponent(this.searchQuery));
                         const data = await response.json();
-                        this.results = data.results || [];
+                        const rawResults = data.results || [];
+                        
+                        // Filter out results without year or poster
+                        this.results = rawResults.filter(item => {
+                            const hasYear = item.release_date || item.first_air_date;
+                            const hasPoster = item.poster_path;
+                            return hasYear && hasPoster;
+                        });
                     } catch (error) {
                         console.error(\'Search error:\', error);
                         this.results = [];
@@ -514,7 +544,7 @@ function getSharedScriptJs(): string
                         await this.loadUserLists();
                     }
                     
-                    const defaultList = this.userLists.find(list => list.is_default == 1 && list.is_watched_list == 0);
+                    const defaultList = this.userLists.find(list => list.is_default == 1);
                     if (!defaultList) {
                         alert(\'Du har ingen standardlista för att lägga till titlar\');
                         return;
@@ -552,7 +582,7 @@ function getSharedScriptJs(): string
                         await this.loadUserLists();
                     }
                     
-                    const defaultList = this.userLists.find(list => list.is_default == 1 && list.is_watched_list == 0);
+                    const defaultList = this.userLists.find(list => list.is_default == 1);
                     if (!defaultList) {
                         alert(\'Du har ingen standardlista för att lägga till titlar\');
                         return;
@@ -615,7 +645,8 @@ function getSharedScriptJs(): string
                         }
                         
                         this.lists = data.lists || [];
-                        this.visibleLists = this.lists.filter(l => l.is_watched_list == 0);
+                        // No more watched list filtering needed - all lists are regular lists
+                        this.visibleLists = this.lists;
                         
                         // Set the first visible list as active tab
                         if (this.visibleLists.length > 0) {
@@ -979,7 +1010,14 @@ function getDashboardHtml(array $user): string
                     try {
                         const response = await fetch(`/api/search?q=${encodeURIComponent(this.searchQuery)}`);
                         const data = await response.json();
-                        this.results = data.results || [];
+                        const rawResults = data.results || [];
+                        
+                        // Filter out results without year or poster
+                        this.results = rawResults.filter(item => {
+                            const hasYear = item.release_date || item.first_air_date;
+                            const hasPoster = item.poster_path;
+                            return hasYear && hasPoster;
+                        });
                     } catch (error) {
                         console.error(\'Search error:\', error);
                         this.results = [];
@@ -1120,7 +1158,8 @@ function getDashboardHtml(array $user): string
                         }
                         
                         this.lists = data.lists || [];
-                        this.visibleLists = this.lists.filter(l => l.is_watched_list == 0);
+                        // No more watched list filtering needed - all lists are regular lists
+                        this.visibleLists = this.lists;
                         
                         // Set the first visible list as active tab
                         if (this.visibleLists.length > 0) {
@@ -1439,10 +1478,10 @@ function getTitleDetailHtml(array $user, array $titleData): string
                     </div>
                     
                     <!-- Lists Section -->
-                    <div x-show="userStatus.filter(s => s.is_watched_list != 1).length > 0" class="mb-6">
+                    <div x-show="userStatus.length > 0" class="mb-6">
                         <h3 class="text-lg font-semibold text-gray-900 mb-3">Med i lista:</h3>
                         <div class="space-y-2">
-                            <template x-for="status in userStatus.filter(s => s.is_watched_list != 1)" :key="status.list_id">
+                            <template x-for="status in userStatus" :key="status.list_id">
                                 <div class="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
                                     <a :href="\'/lists/\' + status.list_id" class="text-blue-600 hover:text-blue-800 font-medium cursor-pointer" x-text="status.list_name"></a>
                                     <button @click="removeFromList(status.list_id)" class="text-red-500 hover:text-red-700 font-bold text-lg">×</button>
@@ -1522,23 +1561,11 @@ function getTitleDetailHtml(array $user, array $titleData): string
                             this.originalComment = entryWithComment.comment;
                         }
                         
-                        // Set current state text - prioritize most relevant state
+                        // Set current state text - use the user title state
                         if (this.userStatus.length > 0) {
-                            const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
-                            if (nonWatchedStatus.length > 0) {
-                                const priorityOrder = [\'watched\', \'watching\', \'want\', \'stopped\'];
-                                let currentStatus = nonWatchedStatus[0];
-                                
-                                for (let state of priorityOrder) {
-                                    const foundStatus = nonWatchedStatus.find(s => s.state === state);
-                                    if (foundStatus) {
-                                        currentStatus = foundStatus;
-                                        break;
-                                    }
-                                }
-                                
-                                this.currentStateText = this.getStateText(currentStatus.state);
-                            }
+                            // All lists now have the same state (from user_titles table)
+                            const currentStatus = this.userStatus[0];
+                            this.currentStateText = this.getStateText(currentStatus.state);
                         }
                         
                         await this.loadAvailableLists();
@@ -1553,10 +1580,10 @@ function getTitleDetailHtml(array $user, array $titleData): string
                         const data = await response.json();
                         const allLists = data.lists || [];
                         
-                        // Filter out watched lists and lists the title is already in
+                        // Filter out lists the title is already in  
                         const currentListIds = this.userStatus.map(s => s.list_id);
                         this.availableLists = allLists.filter(list => 
-                            list.is_watched_list == 0 && !currentListIds.includes(list.id)
+                            !currentListIds.includes(list.id)
                         );
                     } catch (error) {
                         console.error(\'Failed to load available lists:\', error);
@@ -1566,20 +1593,18 @@ function getTitleDetailHtml(array $user, array $titleData): string
                 async setRating(rating) {
                     this.userRating = rating;
                     
-                    // Find the first non-watched list entry to update rating
-                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
-                    if (nonWatchedStatus.length > 0) {
-                        const firstStatus = nonWatchedStatus[0];
-                        await this.updateTitleInList(firstStatus.list_id, firstStatus.state, rating, this.userComment);
+                    // Update user title state (no longer tied to specific list)
+                    if (this.userStatus.length > 0) {
+                        const currentStatus = this.userStatus[0];
+                        await this.updateTitleInList(currentStatus.list_id, currentStatus.state, rating, this.userComment);
                     }
                 },
                 
                 async saveComment() {
-                    // Find the first non-watched list entry to update comment
-                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
-                    if (nonWatchedStatus.length > 0) {
-                        const firstStatus = nonWatchedStatus[0];
-                        await this.updateTitleInList(firstStatus.list_id, firstStatus.state, this.userRating, this.userComment);
+                    // Update user title state (no longer tied to specific list)
+                    if (this.userStatus.length > 0) {
+                        const currentStatus = this.userStatus[0];
+                        await this.updateTitleInList(currentStatus.list_id, currentStatus.state, this.userRating, this.userComment);
                         this.originalComment = this.userComment;
                         this.showCommentEdit = false;
                     }
@@ -1593,10 +1618,10 @@ function getTitleDetailHtml(array $user, array $titleData): string
                 async updateState(newState) {
                     this.showStateModal = false;
                     
-                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
-                    if (nonWatchedStatus.length > 0) {
-                        const firstStatus = nonWatchedStatus[0];
-                        await this.updateTitleInList(firstStatus.list_id, newState, this.userRating, this.userComment);
+                    // Update user title state (no longer tied to specific list)
+                    if (this.userStatus.length > 0) {
+                        const currentStatus = this.userStatus[0];
+                        await this.updateTitleInList(currentStatus.list_id, newState, this.userRating, this.userComment);
                     }
                 },
                 
@@ -1718,7 +1743,14 @@ function getTitleDetailHtml(array $user, array $titleData): string
                     try {
                         const response = await fetch(\'/api/search?q=\' + encodeURIComponent(this.searchQuery));
                         const data = await response.json();
-                        this.results = data.results || [];
+                        const rawResults = data.results || [];
+                        
+                        // Filter out results without year or poster
+                        this.results = rawResults.filter(item => {
+                            const hasYear = item.release_date || item.first_air_date;
+                            const hasPoster = item.poster_path;
+                            return hasYear && hasPoster;
+                        });
                     } catch (error) {
                         console.error(\'Search error:\', error);
                         this.results = [];
@@ -1741,7 +1773,7 @@ function getTitleDetailHtml(array $user, array $titleData): string
                         await this.loadUserLists();
                     }
                     
-                    const defaultList = this.userLists.find(list => list.is_default == 1 && list.is_watched_list == 0);
+                    const defaultList = this.userLists.find(list => list.is_default == 1);
                     if (!defaultList) {
                         alert(\'Du har ingen standardlista för att lägga till titlar\');
                         return;

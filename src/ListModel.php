@@ -13,14 +13,14 @@ class ListModel
         $this->pdo = Database::getConnection();
     }
 
-    public function create(string $name, int $createdBy, string $description = '', string $visibility = 'private', bool $isDefault = false, bool $isWatchedList = false): int
+    public function create(string $name, int $createdBy, string $description = '', string $visibility = 'private', bool $isDefault = false): int
     {
         $stmt = $this->pdo->prepare(
-            "INSERT INTO lists (name, description, visibility, is_default, is_watched_list, created_by) 
-             VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT INTO lists (name, description, visibility, is_default, created_by) 
+             VALUES (?, ?, ?, ?, ?)"
         );
         
-        $stmt->execute([$name, $description, $visibility, $isDefault ? 1 : 0, $isWatchedList ? 1 : 0, $createdBy]);
+        $stmt->execute([$name, $description, $visibility, $isDefault ? 1 : 0, $createdBy]);
         $listId = $this->pdo->lastInsertId();
 
         $this->addOwner($listId, $createdBy);
@@ -36,7 +36,7 @@ class ListModel
              FROM lists l
              JOIN list_owners lo ON l.id = lo.list_id
              WHERE lo.user_id = ?
-             ORDER BY l.is_watched_list DESC, l.is_default DESC, l.created_at DESC"
+             ORDER BY l.is_default DESC, l.created_at DESC"
         );
         
         $stmt->execute([$userId]);
@@ -64,17 +64,12 @@ class ListModel
         return $list ?: null;
     }
 
+    // This method is no longer needed as watched functionality is handled by UserTitle class
+    // Keeping for backward compatibility during migration
     public function getUserWatchedList(int $userId): ?array
     {
-        $stmt = $this->pdo->prepare(
-            "SELECT l.* FROM lists l
-             JOIN list_owners lo ON l.id = lo.list_id
-             WHERE lo.user_id = ? AND l.is_watched_list = TRUE
-             LIMIT 1"
-        );
-        
-        $stmt->execute([$userId]);
-        return $stmt->fetch() ?: null;
+        // Return null as watched lists no longer exist
+        return null;
     }
 
     public function getUserDefaultList(int $userId): ?array
@@ -82,7 +77,7 @@ class ListModel
         $stmt = $this->pdo->prepare(
             "SELECT l.* FROM lists l
              JOIN list_owners lo ON l.id = lo.list_id
-             WHERE lo.user_id = ? AND l.is_default = TRUE AND l.is_watched_list = FALSE
+             WHERE lo.user_id = ? AND l.is_default = TRUE
              LIMIT 1"
         );
         
