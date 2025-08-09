@@ -323,6 +323,7 @@ function getDashboardHtml(array $user): string
                     type="text" 
                     x-model="searchQuery"
                     @input="search()"
+                    @keydown.escape="clearSearch()"
                     placeholder="Sök filmer och TV-serier..."
                     class="flex-1 px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                 >
@@ -490,6 +491,11 @@ function getDashboardHtml(array $user): string
                     }
                 },
                 
+                clearSearch() {
+                    this.searchQuery = \'\';
+                    this.results = [];
+                },
+                
                 async addToWatched(item) {
                     if (!this.userLists) {
                         await this.loadUserLists();
@@ -534,7 +540,8 @@ function getDashboardHtml(array $user): string
                         const data = await response.json();
                         
                         if (response.ok) {
-                            alert((item.title || item.name) + \' lades till i listan!\');
+                            // Clear search results
+                            this.clearSearch();
                             // Reload lists to update count
                             this.loadLists();
                             // Refresh the specific list that was updated if it\'s expanded

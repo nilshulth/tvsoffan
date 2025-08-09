@@ -32,3 +32,4 @@ See README.md for the complete tech stack. Key points for development:
 - **Database**: Use PDO with UTF-8 (`utf8mb4_unicode_ci`) for all MariaDB operations
 - **Frontend**: CDN-only assets (Tailwind CSS, Alpine.js), no build process
 - **External APIs**: TMDB integration is core, JustWatch planned for v0.3
+- **JavaScript in PHP strings**: Always use string concatenation (`'url' + variable`) instead of template literals (`` `url${variable}` ``) to avoid PHP parsing conflicts with backticks and `${}`
