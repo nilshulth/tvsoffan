@@ -206,6 +206,68 @@ $app->post('/api/titles/update/{title_id}', function (Request $request, Response
     }
 });
 
+$app->get('/api/titles/{title_id}/status', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $titleId = (int)$args['title_id'];
+
+    try {
+        $stmt = Database::getConnection()->prepare(
+            "SELECT li.*, l.name as list_name, l.id as list_id, l.is_watched_list
+             FROM list_items li
+             JOIN lists l ON li.list_id = l.id
+             JOIN list_owners lo ON l.id = lo.list_id
+             WHERE li.title_id = ? AND lo.user_id = ?
+             ORDER BY l.name"
+        );
+        $stmt->execute([$titleId, $_SESSION['user_id']]);
+        $status = $stmt->fetchAll();
+
+        $response->getBody()->write(json_encode(['status' => $status]));
+        return $response->withHeader('Content-Type', 'application/json');
+    } catch (\Exception $e) {
+        error_log("Get title status error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Server error']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
+$app->delete('/api/titles/{title_id}/lists/{list_id}', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $titleId = (int)$args['title_id'];
+    $listId = (int)$args['list_id'];
+
+    try {
+        $listModel = new ListModel();
+        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
+            $response->getBody()->write(json_encode(['error' => 'Access denied']));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
+
+        $listItem = new ListItem();
+        $success = $listItem->removeFromList($listId, $titleId);
+
+        if ($success) {
+            $response->getBody()->write(json_encode(['success' => true]));
+            return $response->withHeader('Content-Type', 'application/json');
+        } else {
+            $response->getBody()->write(json_encode(['error' => 'Failed to remove from list']));
+            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        }
+    } catch (\Exception $e) {
+        error_log("Remove from list error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Server error']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
 $app->get('/api/lists', function (Request $request, Response $response) {
     if (!isset($_SESSION['user_id'])) {
         $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
@@ -720,7 +782,7 @@ function getDashboardHtml(array $user): string
                         \'want\': \'Vill se\',
                         \'watching\': \'Tittar\',
                         \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat\'
+                        \'stopped\': \'Slutat titta\'
                     };
                     return stateTexts[state] || state;
                 },
@@ -899,94 +961,138 @@ function getTitleDetailHtml(array $user, array $titleData): string
             </div>
         </header>
         
-        <div class="bg-white rounded-lg shadow overflow-hidden" x-data="titleDetailApp(' . $titleData['id'] . ')" x-init="loadUserLists(); loadUserStatus();">
+        <div class="bg-white rounded-lg shadow overflow-hidden" x-data="titleDetailApp(' . $titleData['id'] . ')" x-init="loadUserStatus();">
             <div class="md:flex">
                 <div class="md:w-1/3">
                     <img src="' . $posterUrl . '" alt="' . htmlspecialchars($titleData['title']) . '" class="w-full h-96 md:h-full object-cover" onerror="this.src=\'/placeholder.png\'">
                 </div>
                 <div class="md:w-2/3 p-6">
-                    <div class="mb-4">
+                    <div class="mb-6">
                         <h2 class="text-3xl font-bold text-gray-900 mb-2">' . htmlspecialchars($titleData['title']) . '</h2>
                         <div class="flex items-center space-x-4 text-sm text-gray-600 mb-4">
                             <span>' . $year . '</span>
                             <span class="capitalize">' . ucfirst($titleData['media_type']) . '</span>
                         </div>
-                        <p class="text-gray-700 leading-relaxed">' . htmlspecialchars($titleData['overview']) . '</p>
                     </div>
                     
-                    <div class="border-t pt-6">
-                        <h3 class="text-lg font-semibold mb-4">Lägg till i lista</h3>
-                        
-                        <div x-show="userLists.length > 0" class="space-y-4">
+                    <!-- User Rating and State Section -->
+                    <div class="mb-6">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-1">
+                                <template x-for="star in 5" :key="star">
+                                    <button @click="setRating(star)" class="text-3xl hover:scale-110 transition-transform focus:outline-none">
+                                        <span :class="star <= userRating ? \'text-yellow-500\' : \'text-gray-300\'" x-text="\'★\'"></span>
+                                    </button>
+                                </template>
+                                <span x-show="userRating > 0" class="ml-2 text-sm text-gray-600" x-text="userRating + \'/5\'"></span>
+                            </div>
+                            <!-- State Button -->
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Välj lista:</label>
-                                <select x-model="selectedListId" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                                    <option value="">Välj en lista</option>
-                                    <template x-for="list in userLists" :key="list.id">
-                                        <option :value="list.id" x-text="list.name"></option>
-                                    </template>
-                                </select>
+                                <button @click="showStateModal = true" class="inline-flex items-center px-4 py-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 font-medium">
+                                    <span x-text="currentStateText || \'Har sett\'"></span>
+                                    <svg class="ml-2 w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                                    </svg>
+                                </button>
                             </div>
-                            
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Status:</label>
-                                <select x-model="selectedState" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                                    <option value="want">Vill se</option>
-                                    <option value="watching">Tittar</option>
-                                    <option value="watched">Sett</option>
-                                    <option value="stopped">Slutat</option>
-                                </select>
-                            </div>
-                            
-                            <div x-show="selectedState === \'watched\'">
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Betyg (valfritt):</label>
-                                <select x-model="selectedRating" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                                    <option value="">Inget betyg</option>
-                                    <option value="1">⭐ 1</option>
-                                    <option value="2">⭐⭐ 2</option>
-                                    <option value="3">⭐⭐⭐ 3</option>
-                                    <option value="4">⭐⭐⭐⭐ 4</option>
-                                    <option value="5">⭐⭐⭐⭐⭐ 5</option>
-                                </select>
-                            </div>
-                            
-                            <div x-show="selectedState === \'watched\'">
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Kommentar (valfritt):</label>
-                                <textarea x-model="comment" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="Vad tyckte du om den?"></textarea>
-                            </div>
-                            
-                            <button @click="addToList()" :disabled="!selectedListId" class="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                                Lägg till i lista
+                        </div>
+                    </div>
+                    
+                    <!-- User Comment Section -->
+                    <div class="mb-6">
+                        <!-- Show comment button if no comment exists -->
+                        <div x-show="!userComment || userComment.trim().length === 0" class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clip-rule="evenodd"></path>
+                            </svg>
+                            <button @click="showCommentEdit = true" class="text-sm text-gray-600 hover:text-gray-800 underline">
+                                Kommentera
                             </button>
                         </div>
                         
-                        <div x-show="userLists.length === 0" class="text-center py-8 text-gray-500">
-                            Inga listor hittades
+                        <!-- Show existing comment -->
+                        <div x-show="userComment && userComment.trim().length > 0 && !showCommentEdit" @click="showCommentEdit = true" class="cursor-pointer hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors">
+                            <div class="flex items-start space-x-2">
+                                <svg class="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clip-rule="evenodd"></path>
+                                </svg>
+                                <div class="flex-1">
+                                    <div class="p-3 bg-gray-50 rounded-lg border-l-4 border-blue-500">
+                                        <p class="text-sm text-gray-700 italic">
+                                            <span class="text-gray-500">"</span><span x-text="userComment"></span><span class="text-gray-500">"</span>
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Comment edit box -->
+                        <div x-show="showCommentEdit" class="flex items-start space-x-2">
+                            <svg class="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clip-rule="evenodd"></path>
+                            </svg>
+                            <div class="flex-1">
+                                <textarea x-model="userComment" placeholder="Lägg till en snabb kommentar..." class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none" rows="2"></textarea>
+                                <div class="flex space-x-2 mt-2">
+                                    <button @click="saveComment" class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">Spara</button>
+                                    <button @click="cancelComment" class="px-3 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400">Avbryt</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
-                    <div x-show="userStatus" class="mt-6 p-4 bg-gray-50 rounded-lg">
-                        <h4 class="font-semibold text-gray-900 mb-2">Din status:</h4>
-                        <template x-for="status in userStatus" :key="status.list_id">
-                            <div class="flex justify-between items-center py-1">
-                                <span class="text-sm text-gray-600" x-text="status.list_name"></span>
-                                <div class="flex items-center space-x-2">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" 
-                                          :class="{
-                                              \'bg-yellow-100 text-yellow-800\': status.state === \'want\',
-                                              \'bg-blue-100 text-blue-800\': status.state === \'watching\',
-                                              \'bg-green-100 text-green-800\': status.state === \'watched\',
-                                              \'bg-red-100 text-red-800\': status.state === \'stopped\'
-                                          }"
-                                          x-text="getStateText(status.state)">
-                                    </span>
-                                    <span x-show="status.rating" class="text-xs text-gray-500">
-                                        ⭐ <span x-text="status.rating"></span>
-                                    </span>
+                    <!-- Title Description -->
+                    <div class="mb-6">
+                        <p class="text-gray-700 leading-relaxed">' . htmlspecialchars($titleData['overview']) . '</p>
+                    </div>
+                    
+                    <!-- Lists Section -->
+                    <div x-show="userStatus.filter(s => s.is_watched_list != 1).length > 0" class="mb-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Med i lista:</h3>
+                        <div class="space-y-2">
+                            <template x-for="status in userStatus.filter(s => s.is_watched_list != 1)" :key="status.list_id">
+                                <div class="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                                    <a :href="\'/lists/\' + status.list_id" class="text-blue-600 hover:text-blue-800 font-medium cursor-pointer" x-text="status.list_name"></a>
+                                    <button @click="removeFromList(status.list_id)" class="text-red-500 hover:text-red-700 font-bold text-lg">×</button>
                                 </div>
-                            </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <!-- Add to List Button -->
+                    <button @click="showAddListModal = true" class="inline-flex items-center px-6 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 font-medium">
+                        + Lägg till i lista
+                    </button>
+                </div>
+            </div>
+            
+            <!-- State Modal -->
+            <div x-show="showStateModal" x-transition class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click="showStateModal = false">
+                <div class="bg-white rounded-lg p-6 max-w-sm w-full mx-4" @click.stop>
+                    <h3 class="text-lg font-semibold mb-4">Ändra status</h3>
+                    <div class="space-y-2">
+                        <button @click="updateState(\'want\')" class="w-full text-left px-3 py-2 rounded hover:bg-gray-100">Vill se</button>
+                        <button @click="updateState(\'watching\')" class="w-full text-left px-3 py-2 rounded hover:bg-gray-100">Tittar</button>
+                        <button @click="updateState(\'watched\')" class="w-full text-left px-3 py-2 rounded hover:bg-gray-100">Sett</button>
+                        <button @click="updateState(\'stopped\')" class="w-full text-left px-3 py-2 rounded hover:bg-gray-100">Slutat titta</button>
+                    </div>
+                    <button @click="showStateModal = false" class="mt-4 w-full px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Stäng</button>
+                </div>
+            </div>
+            
+            <!-- Add to List Modal -->
+            <div x-show="showAddListModal" x-transition class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click="showAddListModal = false">
+                <div class="bg-white rounded-lg p-6 max-w-sm w-full mx-4" @click.stop>
+                    <h3 class="text-lg font-semibold mb-4">Välj lista</h3>
+                    <div class="space-y-2 max-h-60 overflow-y-auto">
+                        <template x-for="list in availableLists" :key="list.id">
+                            <button @click="addToList(list.id)" class="w-full text-left px-3 py-2 rounded hover:bg-gray-100" x-text="list.name"></button>
                         </template>
                     </div>
+                    <div x-show="availableLists.length === 0" class="text-center py-4 text-gray-500">
+                        Inga tillgängliga listor
+                    </div>
+                    <button @click="showAddListModal = false" class="mt-4 w-full px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Stäng</button>
                 </div>
             </div>
         </div>
@@ -996,42 +1102,118 @@ function getTitleDetailHtml(array $user, array $titleData): string
         function titleDetailApp(titleId) {
             return {
                 titleId: titleId,
-                userLists: [],
-                selectedListId: \'\',
-                selectedState: \'want\',
-                selectedRating: \'\',
-                comment: \'\',
-                userStatus: null,
+                userStatus: [],
+                userRating: 0,
+                userComment: \'\',
+                originalComment: \'\',
+                currentStateText: \'\',
+                showStateModal: false,
+                showAddListModal: false,
+                showCommentEdit: false,
+                availableLists: [],
                 
-                async loadUserLists() {
+                async loadUserStatus() {
                     try {
-                        const response = await fetch(\'/api/lists\');
+                        const response = await fetch(\'/api/titles/\' + this.titleId + \'/status\');
                         const data = await response.json();
-                        this.userLists = data.lists || [];
-                        if (this.userLists.length > 0) {
-                            const defaultList = this.userLists.find(list => list.is_default == 1);
-                            if (defaultList) {
-                                this.selectedListId = defaultList.id;
+                        this.userStatus = data.status || [];
+                        
+                        // Set current rating and comment from any entry with data
+                        const entryWithRating = this.userStatus.find(s => s.rating);
+                        if (entryWithRating) {
+                            this.userRating = parseInt(entryWithRating.rating) || 0;
+                        }
+                        
+                        const entryWithComment = this.userStatus.find(s => s.comment && s.comment.trim() !== \'\');
+                        if (entryWithComment) {
+                            this.userComment = entryWithComment.comment;
+                            this.originalComment = entryWithComment.comment;
+                        }
+                        
+                        // Set current state text - prioritize most relevant state
+                        if (this.userStatus.length > 0) {
+                            const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
+                            if (nonWatchedStatus.length > 0) {
+                                const priorityOrder = [\'watched\', \'watching\', \'want\', \'stopped\'];
+                                let currentStatus = nonWatchedStatus[0];
+                                
+                                for (let state of priorityOrder) {
+                                    const foundStatus = nonWatchedStatus.find(s => s.state === state);
+                                    if (foundStatus) {
+                                        currentStatus = foundStatus;
+                                        break;
+                                    }
+                                }
+                                
+                                this.currentStateText = this.getStateText(currentStatus.state);
                             }
                         }
+                        
+                        await this.loadAvailableLists();
                     } catch (error) {
-                        console.error(\'Failed to load lists:\', error);
+                        console.error(\'Failed to load user status:\', error);
                     }
                 },
                 
-                async loadUserStatus() {
-                    // Load current status of this title in user\'s lists
-                    // This would need additional API endpoint
+                async loadAvailableLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        const allLists = data.lists || [];
+                        
+                        // Filter out watched lists and lists the title is already in
+                        const currentListIds = this.userStatus.map(s => s.list_id);
+                        this.availableLists = allLists.filter(list => 
+                            list.is_watched_list == 0 && !currentListIds.includes(list.id)
+                        );
+                    } catch (error) {
+                        console.error(\'Failed to load available lists:\', error);
+                    }
                 },
                 
-                async addToList() {
-                    if (!this.selectedListId) return;
+                async setRating(rating) {
+                    this.userRating = rating;
                     
+                    // Find the first non-watched list entry to update rating
+                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
+                    if (nonWatchedStatus.length > 0) {
+                        const firstStatus = nonWatchedStatus[0];
+                        await this.updateTitleInList(firstStatus.list_id, firstStatus.state, rating, this.userComment);
+                    }
+                },
+                
+                async saveComment() {
+                    // Find the first non-watched list entry to update comment
+                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
+                    if (nonWatchedStatus.length > 0) {
+                        const firstStatus = nonWatchedStatus[0];
+                        await this.updateTitleInList(firstStatus.list_id, firstStatus.state, this.userRating, this.userComment);
+                        this.originalComment = this.userComment;
+                        this.showCommentEdit = false;
+                    }
+                },
+                
+                cancelComment() {
+                    this.userComment = this.originalComment;
+                    this.showCommentEdit = false;
+                },
+                
+                async updateState(newState) {
+                    this.showStateModal = false;
+                    
+                    const nonWatchedStatus = this.userStatus.filter(s => s.is_watched_list != 1);
+                    if (nonWatchedStatus.length > 0) {
+                        const firstStatus = nonWatchedStatus[0];
+                        await this.updateTitleInList(firstStatus.list_id, newState, this.userRating, this.userComment);
+                    }
+                },
+                
+                async updateTitleInList(listId, state, rating = null, comment = \'\') {
                     const requestBody = {
-                        list_id: this.selectedListId,
-                        state: this.selectedState,
-                        rating: this.selectedRating || null,
-                        comment: this.comment || \'\'
+                        list_id: listId,
+                        state: state,
+                        rating: rating || null,
+                        comment: comment || \'\'
                     };
                     
                     try {
@@ -1043,16 +1225,41 @@ function getTitleDetailHtml(array $user, array $titleData): string
                             body: JSON.stringify(requestBody)
                         });
                         
-                        const data = await response.json();
+                        if (response.ok) {
+                            await this.loadUserStatus();
+                        } else {
+                            const data = await response.json();
+                            alert(\'Fel: \' + (data.error || \'Kunde inte uppdatera\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Update error:\', error);
+                        alert(\'Något gick fel vid uppdatering\');
+                    }
+                },
+                
+                async addToList(listId) {
+                    this.showAddListModal = false;
+                    
+                    const requestBody = {
+                        list_id: listId,
+                        state: \'want\',
+                        rating: this.userRating || null,
+                        comment: this.userComment || \'\'
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/titles/update/\' + this.titleId, {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
                         
                         if (response.ok) {
-                            // Reset form
-                            this.selectedState = \'want\';
-                            this.selectedRating = \'\';
-                            this.comment = \'\';
-                            // Reload status
-                            this.loadUserStatus();
+                            await this.loadUserStatus();
                         } else {
+                            const data = await response.json();
                             alert(\'Fel: \' + (data.error || \'Kunde inte lägga till i listan\'));
                         }
                     } catch (error) {
@@ -1061,12 +1268,30 @@ function getTitleDetailHtml(array $user, array $titleData): string
                     }
                 },
                 
+                async removeFromList(listId) {
+                    try {
+                        const response = await fetch(\'/api/titles/\' + this.titleId + \'/lists/\' + listId, {
+                            method: \'DELETE\'
+                        });
+                        
+                        if (response.ok) {
+                            await this.loadUserStatus();
+                        } else {
+                            const data = await response.json();
+                            alert(\'Fel: \' + (data.error || \'Kunde inte ta bort från listan\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Remove from list error:\', error);
+                        alert(\'Något gick fel vid borttagning\');
+                    }
+                },
+                
                 getStateText(state) {
                     const stateTexts = {
                         \'want\': \'Vill se\',
                         \'watching\': \'Tittar\',
                         \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat\'
+                        \'stopped\': \'Slutat titta\'
                     };
                     return stateTexts[state] || state;
                 }
