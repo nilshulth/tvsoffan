@@ -281,6 +281,43 @@ $app->get('/api/lists', function (Request $request, Response $response) {
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+$app->post('/api/lists', function (Request $request, Response $response) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $data = json_decode($request->getBody()->getContents(), true);
+    
+    if (empty($data['name'])) {
+        $response->getBody()->write(json_encode(['error' => 'Listnamn krävs']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $listModel = new ListModel();
+        $listId = $listModel->create(
+            $data['name'],
+            $_SESSION['user_id'],
+            $data['description'] ?? '',
+            $data['visibility'] ?? 'private',
+            $data['is_default'] ?? false,
+            false // is_watched_list = false
+        );
+
+        $response->getBody()->write(json_encode([
+            'success' => true,
+            'list_id' => $listId,
+            'message' => 'Lista skapad'
+        ]));
+        return $response->withStatus(201)->withHeader('Content-Type', 'application/json');
+    } catch (\Exception $e) {
+        error_log("Create list error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Kunde inte skapa listan']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
 $app->get('/api/lists/{list_id}/items', function (Request $request, Response $response, array $args) {
     if (!isset($_SESSION['user_id'])) {
         $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
@@ -535,17 +572,22 @@ function getDashboardHtml(array $user): string
                     <div x-show="!loading && visibleLists.length > 0">
                         <!-- Tab Navigation -->
                         <div class="border-b border-gray-200">
-                            <nav class="flex px-6 space-x-8 overflow-x-auto">
-                                <template x-for="list in visibleLists" :key="list.id">
-                                    <button @click="setActiveTab(list.id)" 
-                                            class="flex-shrink-0 py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap"
-                                            :class="activeTabId === list.id ? \'border-blue-500 text-blue-600\' : \'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300\'">
-                                        <span x-text="list.name"></span>
-                                        <span class="ml-2 bg-gray-100 text-gray-600 py-0.5 px-2 rounded-full text-xs" 
-                                              :class="activeTabId === list.id ? \'bg-blue-100 text-blue-600\' : \'bg-gray-100 text-gray-600\'"
-                                              x-text="list.item_count"></span>
-                                    </button>
-                                </template>
+                            <nav class="flex justify-between items-center px-6">
+                                <div class="flex space-x-8 overflow-x-auto">
+                                    <template x-for="list in visibleLists" :key="list.id">
+                                        <button @click="setActiveTab(list.id)" 
+                                                class="flex-shrink-0 py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap"
+                                                :class="activeTabId === list.id ? \'border-blue-500 text-blue-600\' : \'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300\'">
+                                            <span x-text="list.name"></span>
+                                            <span class="ml-2 bg-gray-100 text-gray-600 py-0.5 px-2 rounded-full text-xs" 
+                                                  :class="activeTabId === list.id ? \'bg-blue-100 text-blue-600\' : \'bg-gray-100 text-gray-600\'"
+                                                  x-text="list.item_count"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                                <button @click="showNewListModal = true" class="flex-shrink-0 py-2 px-4 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium text-sm">
+                                    + Ny lista
+                                </button>
                             </nav>
                         </div>
                         
@@ -591,6 +633,38 @@ function getDashboardHtml(array $user): string
                     
                     <div x-show="!loading && visibleLists.length === 0" class="text-center py-8 text-gray-500">
                         Du har inga listor ännu
+                    </div>
+                </div>
+                
+                <!-- New List Modal -->
+                <div x-show="showNewListModal" x-transition class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click="showNewListModal = false">
+                    <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4" @click.stop>
+                        <h3 class="text-lg font-semibold mb-4">Skapa ny lista</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Listnamn:</label>
+                                <input x-model="newListName" type="text" placeholder="Min nya lista..." class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Beskrivning (valfritt):</label>
+                                <textarea x-model="newListDescription" rows="3" placeholder="Vad handlar listan om?" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Synlighet:</label>
+                                <select x-model="newListVisibility" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="private">Privat (endast du)</option>
+                                    <option value="public">Offentlig (alla kan se)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex space-x-3 mt-6">
+                            <button @click="createNewList" :disabled="!newListName.trim()" class="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Skapa lista
+                            </button>
+                            <button @click="cancelNewList" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400">
+                                Avbryt
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -739,6 +813,10 @@ function getDashboardHtml(array $user): string
                 loading: true,
                 activeTabId: null,
                 listItems: {},
+                showNewListModal: false,
+                newListName: \'\',
+                newListDescription: \'\',
+                newListVisibility: \'private\',
                 
                 async loadLists() {
                     try {
@@ -801,6 +879,45 @@ function getDashboardHtml(array $user): string
                     } catch (e) {
                         return \'Okänt år\';
                     }
+                },
+                
+                async createNewList() {
+                    if (!this.newListName.trim()) return;
+                    
+                    const requestBody = {
+                        name: this.newListName.trim(),
+                        description: this.newListDescription.trim(),
+                        visibility: this.newListVisibility,
+                        is_default: false
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/lists\', {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        if (response.ok) {
+                            this.cancelNewList();
+                            await this.loadLists(); // Reload lists to show the new one
+                        } else {
+                            const data = await response.json();
+                            alert(\'Fel: \' + (data.error || \'Kunde inte skapa listan\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Create list error:\', error);
+                        alert(\'Något gick fel när listan skulle skapas\');
+                    }
+                },
+                
+                cancelNewList() {
+                    this.showNewListModal = false;
+                    this.newListName = \'\';
+                    this.newListDescription = \'\';
+                    this.newListVisibility = \'private\';
                 }
             }
         }
