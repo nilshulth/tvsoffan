@@ -10,11 +10,19 @@ See README.md for full project details, goals, and feature specifications.
 
 ## Development Commands
 
-This is an early-stage project. When actual code is implemented, add development commands here:
-- How to set up local environment
-- How to run the application (`php -S` for local dev)
-- How to run tests
-- How to lint/format code
+**Setup:**
+1. Copy `.env.example` to `.env` and configure database settings
+2. Create database: `mysql -u root -p < schema.sql`
+3. Install dependencies: `composer install`
+
+**Run locally:**
+```bash
+php -S localhost:8000 -t public/
+```
+
+**Database:**
+- Schema file: `schema.sql`
+- Connection via PDO in `src/Database.php`
 
 ## Architecture Notes
 
