@@ -162,6 +162,50 @@ $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $
     }
 });
 
+$app->post('/api/titles/update/{title_id}', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $titleId = (int)$args['title_id'];
+    $data = $request->getParsedBody();
+    
+    $listId = $data['list_id'] ?? null;
+    $state = $data['state'] ?? 'want';
+    $rating = $data['rating'] ?? null;
+    $comment = $data['comment'] ?? '';
+
+    if (!$listId) {
+        $response->getBody()->write(json_encode(['error' => 'List ID required']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $listModel = new ListModel();
+        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
+            $response->getBody()->write(json_encode(['error' => 'Access denied']));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
+
+        $listItem = new ListItem();
+        $success = $listItem->addToList($listId, $titleId, $_SESSION['user_id'], $state, $rating, $comment);
+
+        if ($success) {
+            $response->getBody()->write(json_encode(['success' => true]));
+            return $response->withHeader('Content-Type', 'application/json');
+        } else {
+            $response->getBody()->write(json_encode(['error' => 'Failed to update list']));
+            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        }
+
+    } catch (\Exception $e) {
+        error_log("Update title error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Server error']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
 $app->get('/api/lists', function (Request $request, Response $response) {
     if (!isset($_SESSION['user_id'])) {
         $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
@@ -214,6 +258,29 @@ $app->get('/lists/watched', function (Request $request, Response $response) {
     }
 
     $content = getWatchedListHtml($userData, $watchedList);
+    $response->getBody()->write($content);
+    return $response->withHeader('Content-Type', 'text/html');
+});
+
+$app->get('/title/{id}', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        return $response->withStatus(302)->withHeader('Location', '/');
+    }
+
+    $titleId = (int)$args['id'];
+    
+    $user = new User();
+    $userData = $user->findById($_SESSION['user_id']);
+    
+    $title = new Title();
+    $titleData = $title->findById($titleId);
+    
+    if (!$titleData) {
+        $response->getBody()->write('<h1>Titel hittades inte</h1>');
+        return $response->withHeader('Content-Type', 'text/html');
+    }
+
+    $content = getTitleDetailHtml($userData, $titleData);
     $response->getBody()->write($content);
     return $response->withHeader('Content-Type', 'text/html');
 });
@@ -369,12 +436,20 @@ function getDashboardHtml(array $user): string
                                 <h3 class="font-semibold text-sm mb-1 truncate" x-text="item.title || item.name"></h3>
                                 <p class="text-xs text-gray-500 mb-1" x-text="item.release_date || item.first_air_date || \'Okänt datum\'"></p>
                                 <p class="text-xs text-gray-400 mb-2" x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></p>
-                                <button 
-                                    class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
-                                    @click="addToWatched(item)"
-                                >
-                                    Lägg till
-                                </button>
+                                <div class="space-y-1">
+                                    <button 
+                                        class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 w-full"
+                                        @click="addToWatched(item)"
+                                    >
+                                        Lägg till
+                                    </button>
+                                    <button 
+                                        class="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700 w-full"
+                                        @click="viewTitle(item)"
+                                    >
+                                        Visa
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -421,7 +496,7 @@ function getDashboardHtml(array $user): string
                                 
                                 <div x-show="expandedLists.includes(list.id)" class="mt-4 space-y-2">
                                     <template x-for="item in listItems[list.id] || []" :key="item.id">
-                                        <div class="flex items-center space-x-3 p-2 bg-gray-50 rounded">
+                                        <a :href="\'/title/\' + item.title_id" class="flex items-center space-x-3 p-2 bg-gray-50 rounded hover:bg-gray-100 transition-colors cursor-pointer">
                                             <img 
                                                 :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
                                                 :alt="item.title"
@@ -446,7 +521,7 @@ function getDashboardHtml(array $user): string
                                                     </span>
                                                 </div>
                                             </div>
-                                        </div>
+                                        </a>
                                     </template>
                                     <div x-show="!listItems[list.id] || listItems[list.id].length === 0" class="text-center py-4 text-gray-500 text-sm">
                                         Inga objekt i listan
@@ -494,6 +569,45 @@ function getDashboardHtml(array $user): string
                 clearSearch() {
                     this.searchQuery = \'\';
                     this.results = [];
+                },
+                
+                async viewTitle(item) {
+                    // First add to database if not exists, then navigate
+                    if (!this.userLists) {
+                        await this.loadUserLists();
+                    }
+                    
+                    const defaultList = this.userLists.find(list => list.is_default == 1);
+                    if (!defaultList) {
+                        alert(\'Ingen standardlista hittades\');
+                        return;
+                    }
+                    
+                    const requestBody = {
+                        list_id: defaultList.id,
+                        state: \'want\'
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/titles/\' + item.id + \'/\' + item.media_type + \'/add-to-list\', {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok && data.title_id) {
+                            window.location.href = \'/title/\' + data.title_id;
+                        } else {
+                            alert(\'Kunde inte visa titel\');
+                        }
+                    } catch (error) {
+                        console.error(\'View title error:\', error);
+                        alert(\'Något gick fel\');
+                    }
                 },
                 
                 async addToWatched(item) {
@@ -690,7 +804,7 @@ function getWatchedListHtml(array $user, array $watchedList): string
                                 onerror="this.src=\'/placeholder.png\'"
                             >
                             <div class="flex-1 min-w-0">
-                                <h3 class="font-semibold text-gray-900 mb-1" x-text="item.title"></h3>
+                                <a :href="\'/title/\' + item.title_id" class="font-semibold text-gray-900 mb-1 hover:text-blue-600 cursor-pointer block" x-text="item.title"></a>
                                 <p class="text-sm text-gray-500 mb-2" x-text="getYear(item.release_date)"></p>
                                 <div class="flex items-center space-x-2 mb-2">
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
@@ -737,6 +851,224 @@ function getWatchedListHtml(array $user, array $watchedList): string
                     } catch (e) {
                         return \'Okänt år\';
                     }
+                }
+            }
+        }
+    </script>
+</body>
+</html>';
+}
+
+function getTitleDetailHtml(array $user, array $titleData): string
+{
+    $year = $titleData['release_date'] ? date('Y', strtotime($titleData['release_date'])) : 'Okänt år';
+    $posterUrl = $titleData['poster_path'] ? 'https://image.tmdb.org/t/p/w500' . $titleData['poster_path'] : '/placeholder.png';
+    
+    return '<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>' . htmlspecialchars($titleData['title']) . ' - tvsoffan</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="max-w-4xl mx-auto py-8 px-4">
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
+                <span class="text-gray-400">/</span>
+                <h1 class="text-2xl font-semibold text-gray-800">' . htmlspecialchars($titleData['title']) . '</h1>
+            </div>
+            <div class="relative" x-data="{ open: false }">
+                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
+                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
+                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
+                    <form method="POST" action="/logout" class="block">
+                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                            Logga ut ' . htmlspecialchars($user['name']) . '
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </header>
+        
+        <div class="bg-white rounded-lg shadow overflow-hidden" x-data="titleDetailApp(' . $titleData['id'] . ')" x-init="loadUserLists(); loadUserStatus();">
+            <div class="md:flex">
+                <div class="md:w-1/3">
+                    <img src="' . $posterUrl . '" alt="' . htmlspecialchars($titleData['title']) . '" class="w-full h-96 md:h-full object-cover" onerror="this.src=\'/placeholder.png\'">
+                </div>
+                <div class="md:w-2/3 p-6">
+                    <div class="mb-4">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">' . htmlspecialchars($titleData['title']) . '</h2>
+                        <div class="flex items-center space-x-4 text-sm text-gray-600 mb-4">
+                            <span>' . $year . '</span>
+                            <span class="capitalize">' . ucfirst($titleData['media_type']) . '</span>
+                        </div>
+                        <p class="text-gray-700 leading-relaxed">' . htmlspecialchars($titleData['overview']) . '</p>
+                    </div>
+                    
+                    <div class="border-t pt-6">
+                        <h3 class="text-lg font-semibold mb-4">Lägg till i lista</h3>
+                        
+                        <div x-show="userLists.length > 0" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Välj lista:</label>
+                                <select x-model="selectedListId" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Välj en lista</option>
+                                    <template x-for="list in userLists" :key="list.id">
+                                        <option :value="list.id" x-text="list.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Status:</label>
+                                <select x-model="selectedState" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="want">Vill se</option>
+                                    <option value="watching">Tittar</option>
+                                    <option value="watched">Sett</option>
+                                    <option value="stopped">Slutat</option>
+                                </select>
+                            </div>
+                            
+                            <div x-show="selectedState === \'watched\'">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Betyg (valfritt):</label>
+                                <select x-model="selectedRating" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Inget betyg</option>
+                                    <option value="1">⭐ 1</option>
+                                    <option value="2">⭐⭐ 2</option>
+                                    <option value="3">⭐⭐⭐ 3</option>
+                                    <option value="4">⭐⭐⭐⭐ 4</option>
+                                    <option value="5">⭐⭐⭐⭐⭐ 5</option>
+                                </select>
+                            </div>
+                            
+                            <div x-show="selectedState === \'watched\'">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Kommentar (valfritt):</label>
+                                <textarea x-model="comment" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="Vad tyckte du om den?"></textarea>
+                            </div>
+                            
+                            <button @click="addToList()" :disabled="!selectedListId" class="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Lägg till i lista
+                            </button>
+                        </div>
+                        
+                        <div x-show="userLists.length === 0" class="text-center py-8 text-gray-500">
+                            Inga listor hittades
+                        </div>
+                    </div>
+                    
+                    <div x-show="userStatus" class="mt-6 p-4 bg-gray-50 rounded-lg">
+                        <h4 class="font-semibold text-gray-900 mb-2">Din status:</h4>
+                        <template x-for="status in userStatus" :key="status.list_id">
+                            <div class="flex justify-between items-center py-1">
+                                <span class="text-sm text-gray-600" x-text="status.list_name"></span>
+                                <div class="flex items-center space-x-2">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" 
+                                          :class="{
+                                              \'bg-yellow-100 text-yellow-800\': status.state === \'want\',
+                                              \'bg-blue-100 text-blue-800\': status.state === \'watching\',
+                                              \'bg-green-100 text-green-800\': status.state === \'watched\',
+                                              \'bg-red-100 text-red-800\': status.state === \'stopped\'
+                                          }"
+                                          x-text="getStateText(status.state)">
+                                    </span>
+                                    <span x-show="status.rating" class="text-xs text-gray-500">
+                                        ⭐ <span x-text="status.rating"></span>
+                                    </span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function titleDetailApp(titleId) {
+            return {
+                titleId: titleId,
+                userLists: [],
+                selectedListId: \'\',
+                selectedState: \'want\',
+                selectedRating: \'\',
+                comment: \'\',
+                userStatus: null,
+                
+                async loadUserLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        this.userLists = data.lists || [];
+                        if (this.userLists.length > 0) {
+                            const defaultList = this.userLists.find(list => list.is_default == 1);
+                            if (defaultList) {
+                                this.selectedListId = defaultList.id;
+                            }
+                        }
+                    } catch (error) {
+                        console.error(\'Failed to load lists:\', error);
+                    }
+                },
+                
+                async loadUserStatus() {
+                    // Load current status of this title in user\'s lists
+                    // This would need additional API endpoint
+                },
+                
+                async addToList() {
+                    if (!this.selectedListId) return;
+                    
+                    const requestBody = {
+                        list_id: this.selectedListId,
+                        state: this.selectedState,
+                        rating: this.selectedRating || null,
+                        comment: this.comment || \'\'
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/titles/update/\' + this.titleId, {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            // Reset form
+                            this.selectedState = \'want\';
+                            this.selectedRating = \'\';
+                            this.comment = \'\';
+                            // Reload status
+                            this.loadUserStatus();
+                        } else {
+                            alert(\'Fel: \' + (data.error || \'Kunde inte lägga till i listan\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Add to list error:\', error);
+                        alert(\'Något gick fel när titeln skulle läggas till\');
+                    }
+                },
+                
+                getStateText(state) {
+                    const stateTexts = {
+                        \'want\': \'Vill se\',
+                        \'watching\': \'Tittar\',
+                        \'watched\': \'Sett\',
+                        \'stopped\': \'Slutat\'
+                    };
+                    return stateTexts[state] || state;
                 }
             }
         }
