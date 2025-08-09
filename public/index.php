@@ -391,6 +391,300 @@ $app->get('/placeholder.png', function (Request $request, Response $response) {
     return $response->withHeader('Content-Type', 'image/png');
 });
 
+function getSharedHeaderHtml(array $user, bool $showSearch = true): string
+{
+    $searchSection = '';
+    if ($showSearch) {
+        $searchSection = '
+                <div class="relative" x-data="searchApp()" x-init="loadUserLists()">
+                    <div class="relative">
+                        <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <input 
+                            type="text" 
+                            x-model="searchQuery" 
+                            @input="search()" 
+                            @keydown.escape="clearSearch()"
+                            placeholder="Sök film eller TV-serie..." 
+                            class="pl-10 pr-4 py-2 w-80 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                        <button x-show="searchQuery" @click="clearSearch()" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <div x-show="searchQuery && results.length > 0" class="absolute top-full left-0 mt-2 w-full bg-white rounded-lg shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50">
+                        <template x-for="item in results" :key="item.id">
+                            <div class="flex items-center space-x-3 p-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
+                                <img 
+                                    :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
+                                    :alt="item.title || item.name"
+                                    class="w-12 h-18 object-cover rounded flex-shrink-0"
+                                    onerror="this.src=\'/placeholder.png\'"
+                                >
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-medium text-gray-900 truncate" x-text="item.title || item.name"></p>
+                                    <p class="text-xs text-gray-400 mb-2" x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></p>
+                                    <div class="space-y-1">
+                                        <button 
+                                            class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 w-full"
+                                            @click="addToWatched(item)"
+                                        >
+                                            Lägg till
+                                        </button>
+                                        <button 
+                                            class="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700 w-full"
+                                            @click="viewTitle(item)"
+                                        >
+                                            Visa
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>';
+    }
+    
+    return '
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center space-x-6">
+                <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
+                ' . $searchSection . '
+            </div>
+            <div class="relative" x-data="{ open: false }">
+                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
+                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
+                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
+                    <form method="POST" action="/logout" class="block">
+                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                            Logga ut ' . htmlspecialchars($user['name']) . '
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </header>';
+}
+
+function getSharedScriptJs(): string
+{
+    return '<script>
+        function searchApp() {
+            return {
+                searchQuery: \'\',
+                results: [],
+                loading: false,
+                userLists: null,
+                
+                async loadUserLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        this.userLists = data.lists || [];
+                    } catch (error) {
+                        console.error(\'Failed to load user lists:\', error);
+                    }
+                },
+                
+                async search() {
+                    if (!this.searchQuery || this.searchQuery.length < 2) {
+                        this.results = [];
+                        return;
+                    }
+                    
+                    this.loading = true;
+                    
+                    try {
+                        const response = await fetch(\'/api/search?q=\' + encodeURIComponent(this.searchQuery));
+                        const data = await response.json();
+                        this.results = data.results || [];
+                    } catch (error) {
+                        console.error(\'Search error:\', error);
+                        this.results = [];
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                clearSearch() {
+                    this.searchQuery = \'\';
+                    this.results = [];
+                },
+                
+                viewTitle(item) {
+                    window.location.href = \'/title/\' + item.id;
+                },
+                
+                async addToWatched(item) {
+                    if (!this.userLists) {
+                        await this.loadUserLists();
+                    }
+                    
+                    const defaultList = this.userLists.find(list => list.is_default == 1 && list.is_watched_list == 0);
+                    if (!defaultList) {
+                        alert(\'Du har ingen standardlista för att lägga till titlar\');
+                        return;
+                    }
+                    
+                    const requestBody = {
+                        tmdb_id: item.id,
+                        media_type: item.media_type || \'movie\',
+                        list_id: defaultList.id,
+                        state: \'want\',
+                        rating: null,
+                        comment: \'\'
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/titles\', {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.clearSearch();
+                        } else {
+                            alert(\'Fel: \' + (data.error || \'Kunde inte lägga till titeln\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Add to list error:\', error);
+                        alert(\'Något gick fel när titeln skulle läggas till\');
+                    }
+                }
+            }
+        }
+        
+        function listsApp() {
+            return {
+                lists: [],
+                visibleLists: [],
+                loading: true,
+                activeTabId: null,
+                listItems: {},
+                showNewListModal: false,
+                newListName: \'\',
+                newListDescription: \'\',
+                newListVisibility: \'private\',
+                
+                async loadLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        
+                        if (data.error && data.error === \'Unauthorized\') {
+                            console.log(\'User not authenticated, redirecting to login\');
+                            window.location.href = \'/login\';
+                            return;
+                        }
+                        
+                        this.lists = data.lists || [];
+                        this.visibleLists = this.lists.filter(l => l.is_watched_list == 0);
+                        
+                        // Set the first visible list as active tab
+                        if (this.visibleLists.length > 0) {
+                            await this.setActiveTab(this.visibleLists[0].id);
+                        }
+                    } catch (error) {
+                        console.error(\'Failed to load lists:\', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async setActiveTab(listId) {
+                    this.activeTabId = listId;
+                    await this.loadListItems(listId);
+                },
+                
+                async loadListItems(listId) {
+                    if (this.listItems[listId]) return;
+                    
+                    try {
+                        const response = await fetch(`/api/lists/${listId}/items`);
+                        const data = await response.json();
+                        this.listItems[listId] = data.items || [];
+                    } catch (error) {
+                        console.error(\'Failed to load list items:\', error);
+                        this.listItems[listId] = [];
+                    }
+                },
+                
+                getStateText(state) {
+                    const stateTexts = {
+                        \'want\': \'Vill se\',
+                        \'watching\': \'Tittar\',
+                        \'watched\': \'Sett\',
+                        \'stopped\': \'Slutat titta\'
+                    };
+                    return stateTexts[state] || state;
+                },
+                
+                getYear(releaseDate) {
+                    if (!releaseDate) return \'Okänt år\';
+                    try {
+                        const year = new Date(releaseDate).getFullYear();
+                        return isNaN(year) ? \'Okänt år\' : year.toString();
+                    } catch (e) {
+                        return \'Okänt år\';
+                    }
+                },
+                
+                async createNewList() {
+                    if (!this.newListName.trim()) return;
+                    
+                    const requestBody = {
+                        name: this.newListName.trim(),
+                        description: this.newListDescription.trim(),
+                        visibility: this.newListVisibility,
+                        is_default: false
+                    };
+                    
+                    try {
+                        const response = await fetch(\'/api/lists\', {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        if (response.ok) {
+                            this.cancelNewList();
+                            await this.loadLists(); // Reload lists to show the new one
+                        } else {
+                            const data = await response.json();
+                            alert(\'Fel: \' + (data.error || \'Kunde inte skapa listan\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Create list error:\', error);
+                        alert(\'Något gick fel när listan skulle skapas\');
+                    }
+                },
+                
+                cancelNewList() {
+                    this.showNewListModal = false;
+                    this.newListName = \'\';
+                    this.newListDescription = \'\';
+                    this.newListVisibility = \'private\';
+                }
+            }
+        }
+    </script>';
+}
+
 function getLoginHtml(): string
 {
     return '<!DOCTYPE html>
@@ -482,35 +776,7 @@ function getDashboardHtml(array $user): string
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="max-w-6xl mx-auto py-8 px-4" x-data="{ ...searchApp(), ...listsApp() }" x-init="loadLists()">
-        <header class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold text-gray-900">tvsoffan</h1>
-            <div class="flex items-center space-x-4 flex-1 max-w-md mx-4">
-                <input 
-                    type="text" 
-                    x-model="searchQuery"
-                    @input="search()"
-                    @keydown.escape="clearSearch()"
-                    placeholder="Sök filmer och TV-serier..."
-                    class="flex-1 px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                >
-            </div>
-            <div class="relative" x-data="{ open: false }">
-                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
-                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
-                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                    </svg>
-                </button>
-                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
-                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
-                    <form method="POST" action="/logout" class="block">
-                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
-                            Logga ut ' . htmlspecialchars($user['name']) . '
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </header>
+        ' . getSharedHeaderHtml($user, true) . '
         
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             <div x-show="searchQuery && results.length > 0" class="lg:col-span-2">
@@ -922,6 +1188,7 @@ function getDashboardHtml(array $user): string
             }
         }
     </script>
+    ' . getSharedScriptJs() . '
 </body>
 </html>';
 }
@@ -1059,82 +1326,10 @@ function getTitleDetailHtml(array $user, array $titleData): string
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <div class="max-w-4xl mx-auto py-8 px-4">
-        <header class="flex justify-between items-center mb-8">
-            <div class="flex items-center space-x-6">
-                <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
-                
-                <div class="relative" x-data="searchApp()" x-init="loadUserLists()">
-                    <div class="relative">
-                        <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                        </svg>
-                        <input 
-                            type="text" 
-                            x-model="searchQuery" 
-                            @input="search()" 
-                            @keydown.escape="clearSearch()"
-                            placeholder="Sök film eller TV-serie..." 
-                            class="pl-10 pr-4 py-2 w-80 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        >
-                        <button x-show="searchQuery" @click="clearSearch()" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                            </svg>
-                        </button>
-                    </div>
-                    
-                    <div x-show="searchQuery && results.length > 0" class="absolute top-full left-0 mt-2 w-full bg-white rounded-lg shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50">
-                        <template x-for="item in results" :key="item.id">
-                            <div class="flex items-center space-x-3 p-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
-                                <img 
-                                    :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
-                                    :alt="item.title || item.name"
-                                    class="w-12 h-18 object-cover rounded flex-shrink-0"
-                                    onerror="this.src=\'/placeholder.png\'"
-                                >
-                                <div class="flex-1 min-w-0">
-                                    <p class="text-sm font-medium text-gray-900 truncate" x-text="item.title || item.name"></p>
-                                    <p class="text-xs text-gray-400 mb-2" x-text="item.media_type === \'movie\' ? \'Film\' : \'TV-serie\'"></p>
-                                    <div class="space-y-1">
-                                        <button 
-                                            class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 w-full"
-                                            @click="addToWatched(item)"
-                                        >
-                                            Lägg till
-                                        </button>
-                                        <button 
-                                            class="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700 w-full"
-                                            @click="viewTitle(item)"
-                                        >
-                                            Visa
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                </div>
-            </div>
-            <div class="relative" x-data="{ open: false }">
-                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
-                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
-                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                    </svg>
-                </button>
-                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
-                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
-                    <form method="POST" action="/logout" class="block">
-                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
-                            Logga ut ' . htmlspecialchars($user['name']) . '
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </header>
+    <div class="max-w-4xl mx-auto py-8 px-4" x-data="{ ...searchApp(), ...titleDetailApp(' . $titleData['id'] . ') }" x-init="loadUserLists(); loadUserStatus();">
+        ' . getSharedHeaderHtml($user, true) . '
         
-        <div class="bg-white rounded-lg shadow overflow-hidden" x-data="titleDetailApp(' . $titleData['id'] . ')" x-init="loadUserStatus();">
+        <div class="bg-white rounded-lg shadow overflow-hidden">
             <div class="md:flex">
                 <div class="md:w-1/3">
                     <img src="' . $posterUrl . '" alt="' . htmlspecialchars($titleData['title']) . '" class="w-full h-96 md:h-full object-cover" onerror="this.src=\'/placeholder.png\'">
@@ -1561,6 +1756,7 @@ function getTitleDetailHtml(array $user, array $titleData): string
             }
         }
     </script>
+    ' . getSharedScriptJs() . '
 </body>
 </html>';
 }
