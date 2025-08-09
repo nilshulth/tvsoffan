@@ -3,6 +3,9 @@
 use App\Database;
 use App\User;
 use App\TmdbService;
+use App\ListModel;
+use App\Title;
+use App\ListItem;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
@@ -16,6 +19,7 @@ session_start();
 
 $app = AppFactory::create();
 $app->addErrorMiddleware(true, true, true);
+$app->addBodyParsingMiddleware();
 
 $app->get('/', function (Request $request, Response $response) {
     if (isset($_SESSION['user_id'])) {
@@ -37,7 +41,8 @@ $app->post('/register', function (Request $request, Response $response) {
     $name = $data['name'] ?? '';
 
     if (empty($email) || empty($password) || empty($name)) {
-        return $response->withStatus(400)->withJson(['error' => 'All fields are required']);
+        $response->getBody()->write(json_encode(['error' => 'All fields are required']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 
     $user = new User();
@@ -46,7 +51,8 @@ $app->post('/register', function (Request $request, Response $response) {
         $_SESSION['user_id'] = $userData['id'];
         return $response->withStatus(302)->withHeader('Location', '/');
     } else {
-        return $response->withStatus(400)->withJson(['error' => 'Registration failed']);
+        $response->getBody()->write(json_encode(['error' => 'Registration failed']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 });
 
@@ -62,7 +68,8 @@ $app->post('/login', function (Request $request, Response $response) {
         $_SESSION['user_id'] = $userData['id'];
         return $response->withStatus(302)->withHeader('Location', '/');
     } else {
-        return $response->withStatus(400)->withJson(['error' => 'Invalid credentials']);
+        $response->getBody()->write(json_encode(['error' => 'Invalid credentials']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 });
 
@@ -73,12 +80,14 @@ $app->post('/logout', function (Request $request, Response $response) {
 
 $app->get('/api/search', function (Request $request, Response $response) {
     if (!isset($_SESSION['user_id'])) {
-        return $response->withStatus(401)->withJson(['error' => 'Unauthorized']);
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
     }
 
     $query = $request->getQueryParams()['q'] ?? '';
     if (empty($query)) {
-        return $response->withJson(['results' => []]);
+        $response->getBody()->write(json_encode(['results' => []]));
+        return $response->withHeader('Content-Type', 'application/json');
     }
 
     $tmdb = new TmdbService();
@@ -86,6 +95,113 @@ $app->get('/api/search', function (Request $request, Response $response) {
 
     $response->getBody()->write(json_encode($results));
     return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $tmdbId = (int)$args['tmdb_id'];
+    $mediaType = $args['media_type'];
+    $data = $request->getParsedBody();
+    
+    
+    $listId = $data['list_id'] ?? null;
+    $state = $data['state'] ?? 'want';
+    $rating = $data['rating'] ?? null;
+    $comment = $data['comment'] ?? '';
+
+    if (!$listId) {
+        $response->getBody()->write(json_encode(['error' => 'List ID required']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $listModel = new ListModel();
+        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
+            $response->getBody()->write(json_encode(['error' => 'Access denied']));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
+
+        $tmdb = new TmdbService();
+        $tmdbData = null;
+        
+        if ($mediaType === 'movie') {
+            $tmdbData = $tmdb->getMovieDetails($tmdbId);
+        } else {
+            $tmdbData = $tmdb->getTvShowDetails($tmdbId);
+        }
+
+        if (!$tmdbData) {
+            $response->getBody()->write(json_encode(['error' => 'Title not found']));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+
+        $tmdbData['media_type'] = $mediaType;
+        
+        $title = new Title();
+        $titleId = $title->createFromTmdb($tmdbData);
+
+        $listItem = new ListItem();
+        $success = $listItem->addToList($listId, $titleId, $_SESSION['user_id'], $state, $rating, $comment);
+
+        if ($success) {
+            $response->getBody()->write(json_encode(['success' => true, 'title_id' => $titleId]));
+            return $response->withHeader('Content-Type', 'application/json');
+        } else {
+            $response->getBody()->write(json_encode(['error' => 'Failed to add to list']));
+            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        }
+
+    } catch (\Exception $e) {
+        error_log("Add to list error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Server error']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
+$app->get('/api/lists', function (Request $request, Response $response) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $listModel = new ListModel();
+    $lists = $listModel->getUserLists($_SESSION['user_id']);
+    
+    $response->getBody()->write(json_encode(['lists' => $lists]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/api/lists/{list_id}/items', function (Request $request, Response $response, array $args) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $listId = (int)$args['list_id'];
+    $state = $request->getQueryParams()['state'] ?? null;
+
+    $listModel = new ListModel();
+    if (!$listModel->canUserAccess($listId, $_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Access denied']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
+
+    $listItem = new ListItem();
+    $items = $listItem->getListItems($listId, $state);
+
+    $response->getBody()->write(json_encode(['items' => $items]));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/placeholder.png', function (Request $request, Response $response) {
+    // Return a simple 1x1 transparent PNG
+    $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==');
+    $response->getBody()->write($png);
+    return $response->withHeader('Content-Type', 'image/png');
 });
 
 function getLoginHtml(): string
@@ -244,6 +360,7 @@ function getDashboardHtml(array $user): string
                 searchQuery: \'\',
                 results: [],
                 loading: false,
+                userLists: null,
                 
                 async search() {
                     if (this.searchQuery.length < 2) {
@@ -264,8 +381,58 @@ function getDashboardHtml(array $user): string
                     }
                 },
                 
-                addToWatched(item) {
-                    alert(`Would add "${item.title || item.name}" to watched list`);
+                async addToWatched(item) {
+                    if (!this.userLists) {
+                        await this.loadUserLists();
+                    }
+                    
+                    const defaultList = this.userLists.find(list => list.is_default == 1);
+                    
+                    if (!defaultList) {
+                        alert(\'Ingen standardlista hittades\');
+                        return;
+                    }
+                    
+                    await this.addToList(item, defaultList.id, \'want\');
+                },
+                
+                async loadUserLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        this.userLists = data.lists || [];
+                    } catch (error) {
+                        console.error(\'Failed to load lists:\', error);
+                        this.userLists = [];
+                    }
+                },
+                
+                async addToList(item, listId, state = \'want\') {
+                    const requestBody = {
+                        list_id: listId,
+                        state: state
+                    };
+                    
+                    try {
+                        const response = await fetch(`/api/titles/${item.id}/${item.media_type}/add-to-list`, {
+                            method: \'POST\',
+                            headers: {
+                                \'Content-Type\': \'application/json\',
+                            },
+                            body: JSON.stringify(requestBody)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            alert((item.title || item.name) + \' lades till i listan!\');
+                        } else {
+                            alert(\'Fel: \' + (data.error || \'Kunde inte lägga till i listan\'));
+                        }
+                    } catch (error) {
+                        console.error(\'Add to list error:\', error);
+                        alert(\'Något gick fel när titeln skulle läggas till\');
+                    }
                 }
             }
         }

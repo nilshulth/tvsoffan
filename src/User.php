@@ -19,13 +19,28 @@ class User
             return false;
         }
 
-        $passwordHash = password_hash($password, PASSWORD_ARGON2ID);
+        try {
+            $this->pdo->beginTransaction();
 
-        $stmt = $this->pdo->prepare(
-            "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)"
-        );
+            $passwordHash = password_hash($password, PASSWORD_ARGON2ID);
 
-        return $stmt->execute([$email, $passwordHash, $name]);
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)"
+            );
+            $stmt->execute([$email, $passwordHash, $name]);
+            
+            $userId = $this->pdo->lastInsertId();
+
+            $this->createDefaultLists($userId);
+
+            $this->pdo->commit();
+            return true;
+
+        } catch (\Exception $e) {
+            $this->pdo->rollback();
+            error_log("User registration failed: " . $e->getMessage());
+            return false;
+        }
     }
 
     public function login(string $email, string $password): ?array
@@ -58,5 +73,18 @@ class User
         $stmt = $this->pdo->prepare("SELECT id FROM users WHERE email = ?");
         $stmt->execute([$email]);
         return $stmt->fetch() !== false;
+    }
+
+    private function createDefaultLists(int $userId): void
+    {
+        $listModel = new ListModel();
+        
+        // Create watched list (automatic)
+        $watchedListId = $listModel->create("Sett", $userId, "Automatisk lista över allt du har sett", 'public', false, true);
+        error_log("Created watched list with ID: " . $watchedListId);
+        
+        // Create default list (user's main list)
+        $defaultListId = $listModel->create("Min lista", $userId, "Din personliga lista", 'private', true, false);
+        error_log("Created default list with ID: " . $defaultListId);
     }
 }
