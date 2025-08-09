@@ -1,0 +1,34 @@
+# PHP
+vendor/
+composer.lock
+*.log
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Database
+*.sql
+*.sqlite
+*.db
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+cache/
+
+# User uploads
+uploads/
+public/uploads/
