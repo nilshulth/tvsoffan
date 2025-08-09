@@ -197,6 +197,27 @@ $app->get('/api/lists/{list_id}/items', function (Request $request, Response $re
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+$app->get('/lists/watched', function (Request $request, Response $response) {
+    if (!isset($_SESSION['user_id'])) {
+        return $response->withStatus(302)->withHeader('Location', '/');
+    }
+
+    $user = new User();
+    $userData = $user->findById($_SESSION['user_id']);
+    
+    $listModel = new ListModel();
+    $watchedList = $listModel->getUserWatchedList($_SESSION['user_id']);
+    
+    if (!$watchedList) {
+        $response->getBody()->write('<h1>Sett lista hittades inte</h1>');
+        return $response->withHeader('Content-Type', 'text/html');
+    }
+
+    $content = getWatchedListHtml($userData, $watchedList);
+    $response->getBody()->write($content);
+    return $response->withHeader('Content-Type', 'text/html');
+});
+
 $app->get('/placeholder.png', function (Request $request, Response $response) {
     // Return a simple 1x1 transparent PNG
     $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==');
@@ -294,29 +315,40 @@ function getDashboardHtml(array $user): string
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <div class="max-w-4xl mx-auto py-8 px-4">
+    <div class="max-w-6xl mx-auto py-8 px-4" x-data="{ ...searchApp(), ...listsApp() }" x-init="loadLists()">
         <header class="flex justify-between items-center mb-8">
             <h1 class="text-3xl font-bold text-gray-900">tvsoffan</h1>
-            <div class="flex items-center space-x-4">
-                <span class="text-gray-700">Hej, ' . htmlspecialchars($user['name']) . '!</span>
-                <form method="POST" action="/logout" class="inline">
-                    <button type="submit" class="text-sm text-red-600 hover:text-red-800">Logga ut</button>
-                </form>
-            </div>
-        </header>
-        
-        <div class="bg-white rounded-lg shadow p-6 mb-6" x-data="searchApp()">
-            <h2 class="text-xl font-semibold mb-4">Sök filmer och TV-serier</h2>
-            
-            <div class="mb-4">
+            <div class="flex items-center space-x-4 flex-1 max-w-md mx-4">
                 <input 
                     type="text" 
                     x-model="searchQuery"
                     @input="search()"
-                    placeholder="Sök efter filmer eller TV-serier..."
-                    class="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Sök filmer och TV-serier..."
+                    class="flex-1 px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                 >
             </div>
+            <div class="relative" x-data="{ open: false }">
+                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
+                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
+                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
+                    <form method="POST" action="/logout" class="block">
+                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                            Logga ut ' . htmlspecialchars($user['name']) . '
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </header>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div x-show="searchQuery && results.length > 0" class="lg:col-span-2">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4">Sökresultat</h2>
             
             <div x-show="loading" class="text-center py-4">
                 <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -350,6 +382,83 @@ function getDashboardHtml(array $user): string
             
             <div x-show="searchQuery && results.length === 0 && !loading" class="text-center py-4 text-gray-500">
                 Inga resultat hittades för "<span x-text="searchQuery"></span>"
+            </div>
+                </div>
+            </div>
+            </div>
+            
+            <div :class="searchQuery && results.length > 0 ? \'lg:col-span-1\' : \'lg:col-span-3\'">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4">Mina listor</h2>
+                    
+                    <div x-show="loading" class="text-center py-8">
+                        <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                    </div>
+                    
+                    <div x-show="!loading" class="space-y-3">
+                        <template x-for="list in lists.filter(l => l.is_default == 1 && l.is_watched_list == 0)" :key="list.id">
+                            <div class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer" @click="toggleListItems(list.id)">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1 min-w-0">
+                                        <h3 class="font-medium text-gray-900 truncate" x-text="list.name"></h3>
+                                        <div class="flex items-center mt-1 text-sm text-gray-500">
+                                            <span x-text="list.item_count + \' objekt\'"></span>
+                                            <span x-show="list.is_default == 1" class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                                Standard
+                                            </span>
+                                            <span x-show="list.is_watched_list == 1" class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                                Sett
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="ml-3">
+                                        <svg class="w-4 h-4 text-gray-400 transform transition-transform" :class="{ \'rotate-90\': expandedLists.includes(list.id) }" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                                        </svg>
+                                    </div>
+                                </div>
+                                
+                                <div x-show="expandedLists.includes(list.id)" class="mt-4 space-y-2">
+                                    <template x-for="item in listItems[list.id] || []" :key="item.id">
+                                        <div class="flex items-center space-x-3 p-2 bg-gray-50 rounded">
+                                            <img 
+                                                :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
+                                                :alt="item.title"
+                                                class="w-8 h-12 object-cover rounded flex-shrink-0"
+                                                onerror="this.src=\'/placeholder.png\'"
+                                            >
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-sm font-medium text-gray-900 truncate" x-text="item.title"></p>
+                                                <p class="text-xs text-gray-500" x-text="getYear(item.release_date)"></p>
+                                                <div class="flex items-center mt-1">
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" 
+                                                          :class="{
+                                                              \'bg-yellow-100 text-yellow-800\': item.state === \'want\',
+                                                              \'bg-blue-100 text-blue-800\': item.state === \'watching\',
+                                                              \'bg-green-100 text-green-800\': item.state === \'watched\',
+                                                              \'bg-red-100 text-red-800\': item.state === \'stopped\'
+                                                          }"
+                                                          x-text="getStateText(item.state)">
+                                                    </span>
+                                                    <span x-show="item.rating" class="ml-2 text-xs text-gray-500">
+                                                        ⭐ <span x-text="item.rating"></span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div x-show="!listItems[list.id] || listItems[list.id].length === 0" class="text-center py-4 text-gray-500 text-sm">
+                                        Inga objekt i listan
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        
+                        <div x-show="lists.filter(l => l.is_default == 1 && l.is_watched_list == 0).length === 0" class="text-center py-8 text-gray-500">
+                            Du har ingen standardlista ännu
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -393,7 +502,7 @@ function getDashboardHtml(array $user): string
                         return;
                     }
                     
-                    await this.addToList(item, defaultList.id, \'want\');
+                    await this.addToList(item, defaultList.id, \'want\', defaultList.id);
                 },
                 
                 async loadUserLists() {
@@ -407,7 +516,7 @@ function getDashboardHtml(array $user): string
                     }
                 },
                 
-                async addToList(item, listId, state = \'want\') {
+                async addToList(item, listId, state = \'want\', targetListId = null) {
                     const requestBody = {
                         list_id: listId,
                         state: state
@@ -426,12 +535,200 @@ function getDashboardHtml(array $user): string
                         
                         if (response.ok) {
                             alert((item.title || item.name) + \' lades till i listan!\');
+                            // Reload lists to update count
+                            this.loadLists();
+                            // Refresh the specific list that was updated if it\'s expanded
+                            if (targetListId && this.expandedLists.includes(targetListId)) {
+                                delete this.listItems[targetListId];
+                                this.loadListItems(targetListId);
+                            }
                         } else {
                             alert(\'Fel: \' + (data.error || \'Kunde inte lägga till i listan\'));
                         }
                     } catch (error) {
                         console.error(\'Add to list error:\', error);
                         alert(\'Något gick fel när titeln skulle läggas till\');
+                    }
+                }
+            }
+        }
+        
+        function listsApp() {
+            return {
+                lists: [],
+                loading: true,
+                expandedLists: [],
+                listItems: {},
+                
+                async loadLists() {
+                    try {
+                        const response = await fetch(\'/api/lists\');
+                        const data = await response.json();
+                        this.lists = data.lists || [];
+                    } catch (error) {
+                        console.error(\'Failed to load lists:\', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async toggleListItems(listId) {
+                    if (this.expandedLists.includes(listId)) {
+                        this.expandedLists = this.expandedLists.filter(id => id !== listId);
+                    } else {
+                        this.expandedLists.push(listId);
+                        await this.loadListItems(listId);
+                    }
+                },
+                
+                async loadListItems(listId) {
+                    if (this.listItems[listId]) return;
+                    
+                    try {
+                        const response = await fetch(`/api/lists/${listId}/items`);
+                        const data = await response.json();
+                        this.listItems[listId] = data.items || [];
+                    } catch (error) {
+                        console.error(\'Failed to load list items:\', error);
+                        this.listItems[listId] = [];
+                    }
+                },
+                
+                getStateText(state) {
+                    const stateTexts = {
+                        \'want\': \'Vill se\',
+                        \'watching\': \'Tittar\',
+                        \'watched\': \'Sett\',
+                        \'stopped\': \'Slutat\'
+                    };
+                    return stateTexts[state] || state;
+                },
+                
+                getYear(releaseDate) {
+                    if (!releaseDate) return \'Okänt år\';
+                    try {
+                        const year = new Date(releaseDate).getFullYear();
+                        return isNaN(year) ? \'Okänt år\' : year.toString();
+                    } catch (e) {
+                        return \'Okänt år\';
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>';
+}
+
+function getWatchedListHtml(array $user, array $watchedList): string
+{
+    return '<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sett lista - tvsoffan</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="max-w-6xl mx-auto py-8 px-4">
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
+                <span class="text-gray-400">/</span>
+                <h1 class="text-2xl font-semibold text-gray-800">' . htmlspecialchars($watchedList['name']) . '</h1>
+            </div>
+            <div class="relative" x-data="{ open: false }">
+                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
+                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
+                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+                    <form method="POST" action="/logout" class="block">
+                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                            Logga ut ' . htmlspecialchars($user['name']) . '
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </header>
+        
+        <div class="bg-white rounded-lg shadow" x-data="watchedListApp(' . $watchedList['id'] . ')" x-init="loadItems()">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h2 class="text-xl font-semibold text-gray-900">Sett titlar</h2>
+                        <p class="text-sm text-gray-500 mt-1" x-text="items.length + \' titlar\'"></p>
+                    </div>
+                </div>
+                
+                <div x-show="loading" class="text-center py-12">
+                    <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+                
+                <div x-show="!loading && items.length === 0" class="text-center py-12 text-gray-500">
+                    Du har inte sett några titlar ännu
+                </div>
+                
+                <div x-show="!loading && items.length > 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <template x-for="item in items" :key="item.id">
+                        <div class="flex items-start space-x-4 p-4 bg-gray-50 rounded-lg">
+                            <img 
+                                :src="item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : `/placeholder.png`"
+                                :alt="item.title"
+                                class="w-16 h-24 object-cover rounded flex-shrink-0"
+                                onerror="this.src=\'/placeholder.png\'"
+                            >
+                            <div class="flex-1 min-w-0">
+                                <h3 class="font-semibold text-gray-900 mb-1" x-text="item.title"></h3>
+                                <p class="text-sm text-gray-500 mb-2" x-text="getYear(item.release_date)"></p>
+                                <div class="flex items-center space-x-2 mb-2">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                        Sett
+                                    </span>
+                                    <span x-show="item.rating" class="text-sm text-gray-600">
+                                        ⭐ <span x-text="item.rating"></span>
+                                    </span>
+                                </div>
+                                <p x-show="item.comment" class="text-sm text-gray-700 italic" x-text="item.comment"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function watchedListApp(listId) {
+            return {
+                listId: listId,
+                items: [],
+                loading: true,
+                
+                async loadItems() {
+                    try {
+                        const response = await fetch(`/api/lists/${this.listId}/items?state=watched`);
+                        const data = await response.json();
+                        this.items = data.items || [];
+                    } catch (error) {
+                        console.error(\'Failed to load watched items:\', error);
+                        this.items = [];
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                getYear(releaseDate) {
+                    if (!releaseDate) return \'Okänt år\';
+                    try {
+                        const year = new Date(releaseDate).getFullYear();
+                        return isNaN(year) ? \'Okänt år\' : year.toString();
+                    } catch (e) {
+                        return \'Okänt år\';
                     }
                 }
             }
