@@ -4,14 +4,8 @@ namespace App;
 
 use PDO;
 
-class ListModel
+class ListModel extends BaseModel
 {
-    private PDO $pdo;
-
-    public function __construct()
-    {
-        $this->pdo = Database::getConnection();
-    }
 
     public function create(string $name, int $createdBy, string $description = '', string $visibility = 'private', bool $isDefault = false): int
     {

@@ -4,14 +4,8 @@ namespace App;
 
 use PDO;
 
-class User
+class User extends BaseModel
 {
-    private PDO $pdo;
-
-    public function __construct()
-    {
-        $this->pdo = Database::getConnection();
-    }
 
     public function register(string $email, string $password, string $name): bool
     {

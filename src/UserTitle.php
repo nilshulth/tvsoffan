@@ -4,14 +4,8 @@ namespace App;
 
 use PDO;
 
-class UserTitle
+class UserTitle extends BaseModel
 {
-    private PDO $pdo;
-
-    public function __construct()
-    {
-        $this->pdo = Database::getConnection();
-    }
 
     public function setState(int $userId, int $titleId, string $state, ?int $rating = null, string $comment = ''): bool
     {

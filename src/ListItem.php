@@ -4,14 +4,8 @@ namespace App;
 
 use PDO;
 
-class ListItem
+class ListItem extends BaseModel
 {
-    private PDO $pdo;
-
-    public function __construct()
-    {
-        $this->pdo = Database::getConnection();
-    }
 
     public function addToList(int $listId, int $titleId): bool
     {

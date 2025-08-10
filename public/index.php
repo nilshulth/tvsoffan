@@ -7,6 +7,7 @@ use App\ListModel;
 use App\Title;
 use App\ListItem;
 use App\UserTitle;
+use App\ResponseHelper;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
@@ -22,10 +23,22 @@ $app = AppFactory::create();
 $app->addErrorMiddleware(true, true, true);
 $app->addBodyParsingMiddleware();
 
+// User context middleware - sets user info for all requests
+$app->add(function (Request $request, $handler) {
+    $request = $request->withAttribute('user', [
+        'id' => $_SESSION['user_id'] ?? null,
+        'is_logged_in' => isset($_SESSION['user_id']),
+        'is_visitor' => !isset($_SESSION['user_id'])
+    ]);
+    return $handler->handle($request);
+});
+
 $app->get('/', function (Request $request, Response $response) {
-    if (isset($_SESSION['user_id'])) {
-        $user = new User();
-        $userData = $user->findById($_SESSION['user_id']);
+    $user = $request->getAttribute('user');
+    
+    if (!$user['is_visitor']) {
+        $userModel = new User();
+        $userData = $userModel->findById($user['id']);
         $content = getDashboardHtml($userData);
     } else {
         $content = getLoginHtml();
@@ -42,8 +55,7 @@ $app->post('/register', function (Request $request, Response $response) {
     $name = $data['name'] ?? '';
 
     if (empty($email) || empty($password) || empty($name)) {
-        $response->getBody()->write(json_encode(['error' => 'All fields are required']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'All fields are required', 400);
     }
 
     $user = new User();
@@ -52,8 +64,7 @@ $app->post('/register', function (Request $request, Response $response) {
         $_SESSION['user_id'] = $userData['id'];
         return $response->withStatus(302)->withHeader('Location', '/');
     } else {
-        $response->getBody()->write(json_encode(['error' => 'Registration failed']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'Registration failed', 400);
     }
 });
 
@@ -69,8 +80,7 @@ $app->post('/login', function (Request $request, Response $response) {
         $_SESSION['user_id'] = $userData['id'];
         return $response->withStatus(302)->withHeader('Location', '/');
     } else {
-        $response->getBody()->write(json_encode(['error' => 'Invalid credentials']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'Invalid credentials', 400);
     }
 });
 
@@ -80,28 +90,25 @@ $app->post('/logout', function (Request $request, Response $response) {
 });
 
 $app->get('/api/search', function (Request $request, Response $response) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
-    }
-
+    $user = $request->getAttribute('user');
+    
+    // Allow both logged-in users and visitors to search
     $query = $request->getQueryParams()['q'] ?? '';
     if (empty($query)) {
-        $response->getBody()->write(json_encode(['results' => []]));
-        return $response->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonSuccess($response, ['results' => []]);
     }
 
     $tmdb = new TmdbService();
     $results = $tmdb->searchMulti($query);
 
-    $response->getBody()->write(json_encode($results));
-    return $response->withHeader('Content-Type', 'application/json');
+    return ResponseHelper::jsonSuccess($response, $results);
 });
 
 $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+    
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $tmdbId = (int)$args['tmdb_id'];
@@ -115,15 +122,13 @@ $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $
     $comment = $data['comment'] ?? '';
 
     if (!$listId) {
-        $response->getBody()->write(json_encode(['error' => 'List ID required']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'List ID required', 400);
     }
 
     try {
         $listModel = new ListModel();
-        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
-            $response->getBody()->write(json_encode(['error' => 'Access denied']));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        if (!$listModel->isOwner($listId, $user['id'])) {
+            return ResponseHelper::jsonError($response, 'Access denied', 403);
         }
 
         $tmdb = new TmdbService();
@@ -136,8 +141,7 @@ $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $
         }
 
         if (!$tmdbData) {
-            $response->getBody()->write(json_encode(['error' => 'Title not found']));
-            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonError($response, 'Title not found', 404);
         }
 
         $tmdbData['media_type'] = $mediaType;
@@ -151,27 +155,25 @@ $app->post('/api/titles/{tmdb_id}/{media_type}/add-to-list', function (Request $
 
         // Set user title state (separate from list membership)
         $userTitle = new UserTitle();
-        $stateSuccess = $userTitle->setState($_SESSION['user_id'], $titleId, $state, $rating, $comment);
+        $stateSuccess = $userTitle->setState($user['id'], $titleId, $state, $rating, $comment);
 
         if ($listSuccess && $stateSuccess) {
-            $response->getBody()->write(json_encode(['success' => true, 'title_id' => $titleId]));
-            return $response->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonSuccess($response, ['success' => true, 'title_id' => $titleId]);
         } else {
-            $response->getBody()->write(json_encode(['error' => 'Failed to add to list or set state']));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonError($response, 'Failed to add to list or set state', 500);
         }
 
     } catch (\Exception $e) {
         error_log("Add to list error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Server error']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::serverError($response);
     }
 });
 
 $app->post('/api/titles/update/{title_id}', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $titleId = (int)$args['title_id'];
@@ -183,40 +185,36 @@ $app->post('/api/titles/update/{title_id}', function (Request $request, Response
     $comment = $data['comment'] ?? '';
 
     if (!$listId) {
-        $response->getBody()->write(json_encode(['error' => 'List ID required']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'List ID required', 400);
     }
 
     try {
         $listModel = new ListModel();
-        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
-            $response->getBody()->write(json_encode(['error' => 'Access denied']));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        if (!$listModel->isOwner($listId, $user['id'])) {
+            return ResponseHelper::jsonError($response, 'Access denied', 403);
         }
 
         // Update user title state (no longer tied to specific list)
         $userTitle = new UserTitle();
-        $success = $userTitle->setState($_SESSION['user_id'], $titleId, $state, $rating, $comment);
+        $success = $userTitle->setState($user['id'], $titleId, $state, $rating, $comment);
 
         if ($success) {
-            $response->getBody()->write(json_encode(['success' => true]));
-            return $response->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonSuccess($response, ['success' => true]);
         } else {
-            $response->getBody()->write(json_encode(['error' => 'Failed to update title state']));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonError($response, 'Failed to update title state', 500);
         }
 
     } catch (\Exception $e) {
         error_log("Update title error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Server error']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::serverError($response);
     }
 });
 
 $app->get('/api/titles/{title_id}/status', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $titleId = (int)$args['title_id'];
@@ -224,7 +222,7 @@ $app->get('/api/titles/{title_id}/status', function (Request $request, Response 
     try {
         // Get user's title state and which lists contain this title
         $userTitle = new UserTitle();
-        $userState = $userTitle->getUserTitleState($_SESSION['user_id'], $titleId);
+        $userState = $userTitle->getUserTitleState($user['id'], $titleId);
         
         $stmt = Database::getConnection()->prepare(
             "SELECT l.name as list_name, l.id as list_id
@@ -234,7 +232,7 @@ $app->get('/api/titles/{title_id}/status', function (Request $request, Response 
              WHERE li.title_id = ? AND lo.user_id = ?
              ORDER BY l.name"
         );
-        $stmt->execute([$titleId, $_SESSION['user_id']]);
+        $stmt->execute([$titleId, $user['id']]);
         $lists = $stmt->fetchAll();
         
         // Combine user state with list information
@@ -250,19 +248,18 @@ $app->get('/api/titles/{title_id}/status', function (Request $request, Response 
             ];
         }
 
-        $response->getBody()->write(json_encode(['status' => $status]));
-        return $response->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonSuccess($response, ['status' => $status]);
     } catch (\Exception $e) {
         error_log("Get title status error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Server error']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::serverError($response);
     }
 });
 
 $app->delete('/api/titles/{title_id}/lists/{list_id}', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $titleId = (int)$args['title_id'];
@@ -270,104 +267,98 @@ $app->delete('/api/titles/{title_id}/lists/{list_id}', function (Request $reques
 
     try {
         $listModel = new ListModel();
-        if (!$listModel->isOwner($listId, $_SESSION['user_id'])) {
-            $response->getBody()->write(json_encode(['error' => 'Access denied']));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        if (!$listModel->isOwner($listId, $user['id'])) {
+            return ResponseHelper::jsonError($response, 'Access denied', 403);
         }
 
         $listItem = new ListItem();
         $success = $listItem->removeFromList($listId, $titleId);
 
         if ($success) {
-            $response->getBody()->write(json_encode(['success' => true]));
-            return $response->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonSuccess($response, ['success' => true]);
         } else {
-            $response->getBody()->write(json_encode(['error' => 'Failed to remove from list']));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return ResponseHelper::jsonError($response, 'Failed to remove from list', 500);
         }
     } catch (\Exception $e) {
         error_log("Remove from list error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Server error']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::serverError($response);
     }
 });
 
 $app->get('/api/lists', function (Request $request, Response $response) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $listModel = new ListModel();
-    $lists = $listModel->getUserLists($_SESSION['user_id']);
+    $lists = $listModel->getUserLists($user['id']);
     
-    $response->getBody()->write(json_encode(['lists' => $lists]));
-    return $response->withHeader('Content-Type', 'application/json');
+    return ResponseHelper::jsonSuccess($response, ['lists' => $lists]);
 });
 
 $app->post('/api/lists', function (Request $request, Response $response) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $data = json_decode($request->getBody()->getContents(), true);
     
     if (empty($data['name'])) {
-        $response->getBody()->write(json_encode(['error' => 'Listnamn krävs']));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'Listnamn krävs', 400);
     }
 
     try {
         $listModel = new ListModel();
         $listId = $listModel->create(
             $data['name'],
-            $_SESSION['user_id'],
+            $user['id'],
             $data['description'] ?? '',
             $data['visibility'] ?? 'private',
             $data['is_default'] ?? false
         );
 
-        $response->getBody()->write(json_encode([
+        return ResponseHelper::jsonSuccess($response, [
             'success' => true,
             'list_id' => $listId,
             'message' => 'Lista skapad'
-        ]));
-        return $response->withStatus(201)->withHeader('Content-Type', 'application/json');
+        ], 201);
     } catch (\Exception $e) {
         error_log("Create list error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Kunde inte skapa listan']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonError($response, 'Kunde inte skapa listan', 500);
     }
 });
 
 $app->get('/api/lists/{list_id}/items', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $listId = (int)$args['list_id'];
     $state = $request->getQueryParams()['state'] ?? null;
 
     $listModel = new ListModel();
-    if (!$listModel->canUserAccess($listId, $_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Access denied']));
-        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    if (!$listModel->canUserAccess($listId, $user['id'])) {
+        return ResponseHelper::jsonError($response, 'Access denied', 403);
     }
 
     $listItem = new ListItem();
-    $items = $listItem->getListItems($listId, $state, $_SESSION['user_id']);
+    $items = $listItem->getListItems($listId, $state, $user['id']);
 
-    $response->getBody()->write(json_encode(['items' => $items]));
-    return $response->withHeader('Content-Type', 'application/json');
+    return ResponseHelper::jsonSuccess($response, ['items' => $items]);
 });
 
 // API endpoint to get user titles by state
 $app->get('/api/user/titles', function (Request $request, Response $response) {
-    if (!isset($_SESSION['user_id'])) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
+        return ResponseHelper::unauthorized($response);
     }
 
     $states = $request->getQueryParams()['states'] ?? 'watched,watching,stopped';
@@ -378,7 +369,7 @@ $app->get('/api/user/titles', function (Request $request, Response $response) {
         $allTitles = [];
         
         foreach ($statesArray as $state) {
-            $titles = $userTitle->getUserTitlesByState($_SESSION['user_id'], trim($state), 100);
+            $titles = $userTitle->getUserTitlesByState($user['id'], trim($state), 100);
             $allTitles = array_merge($allTitles, $titles);
         }
         
@@ -387,22 +378,22 @@ $app->get('/api/user/titles', function (Request $request, Response $response) {
             return strtotime($b['user_updated_at']) - strtotime($a['user_updated_at']);
         });
         
-        $response->getBody()->write(json_encode(['items' => $allTitles]));
-        return $response->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::jsonSuccess($response, ['items' => $allTitles]);
     } catch (\Exception $e) {
         error_log("Get user titles error: " . $e->getMessage());
-        $response->getBody()->write(json_encode(['error' => 'Server error']));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        return ResponseHelper::serverError($response);
     }
 });
 
 $app->get('/lists/watched', function (Request $request, Response $response) {
-    if (!isset($_SESSION['user_id'])) {
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
         return $response->withStatus(302)->withHeader('Location', '/');
     }
 
-    $user = new User();
-    $userData = $user->findById($_SESSION['user_id']);
+    $userModel = new User();
+    $userData = $userModel->findById($user['id']);
     
     // Get all titles with watched, watching, or stopped status
     $userTitle = new UserTitle();
@@ -411,7 +402,7 @@ $app->get('/lists/watched', function (Request $request, Response $response) {
     // Get titles for each relevant state
     $states = ['watched', 'watching', 'stopped'];
     foreach ($states as $state) {
-        $titles = $userTitle->getUserTitlesByState($_SESSION['user_id'], $state, 100);
+        $titles = $userTitle->getUserTitlesByState($user['id'], $state, 100);
         $watchedTitles = array_merge($watchedTitles, $titles);
     }
     
@@ -426,14 +417,16 @@ $app->get('/lists/watched', function (Request $request, Response $response) {
 });
 
 $app->get('/title/{id}', function (Request $request, Response $response, array $args) {
-    if (!isset($_SESSION['user_id'])) {
+    $user = $request->getAttribute('user');
+
+    if ($user['is_visitor']) {
         return $response->withStatus(302)->withHeader('Location', '/');
     }
 
     $titleId = (int)$args['id'];
     
-    $user = new User();
-    $userData = $user->findById($_SESSION['user_id']);
+    $userModel = new User();
+    $userData = $userModel->findById($user['id']);
     
     $title = new Title();
     $titleData = $title->findById($titleId);
@@ -531,6 +524,19 @@ function getSharedHeaderHtml(array $user, bool $showSearch = true): string
 function getSharedScriptJs(): string
 {
     return '<script>
+        // Shared utility functions
+        const TvSoffanUtils = {
+            getStateText(state) {
+                const stateTexts = {
+                    \'want\': \'Vill se\',
+                    \'watching\': \'Tittar\',
+                    \'watched\': \'Sett\',
+                    \'stopped\': \'Slutat titta\'
+                };
+                return stateTexts[state] || state;
+            }
+        };
+
         function searchApp() {
             return {
                 searchQuery: \'\',
@@ -718,15 +724,7 @@ function getSharedScriptJs(): string
                     }
                 },
                 
-                getStateText(state) {
-                    const stateTexts = {
-                        \'want\': \'Vill se\',
-                        \'watching\': \'Tittar\',
-                        \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat titta\'
-                    };
-                    return stateTexts[state] || state;
-                },
+                getStateText: TvSoffanUtils.getStateText,
                 
                 getYear(releaseDate) {
                     if (!releaseDate) return \'Okänt år\';
@@ -1231,15 +1229,7 @@ function getDashboardHtml(array $user): string
                     }
                 },
                 
-                getStateText(state) {
-                    const stateTexts = {
-                        \'want\': \'Vill se\',
-                        \'watching\': \'Tittar\',
-                        \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat titta\'
-                    };
-                    return stateTexts[state] || state;
-                },
+                getStateText: TvSoffanUtils.getStateText,
                 
                 getYear(releaseDate) {
                     if (!releaseDate) return \'Okänt år\';

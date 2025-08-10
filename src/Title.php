@@ -4,14 +4,8 @@ namespace App;
 
 use PDO;
 
-class Title
+class Title extends BaseModel
 {
-    private PDO $pdo;
-
-    public function __construct()
-    {
-        $this->pdo = Database::getConnection();
-    }
 
     public function createFromTmdb(array $tmdbData): int
     {
