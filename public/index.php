@@ -363,6 +363,39 @@ $app->get('/api/lists/{list_id}/items', function (Request $request, Response $re
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+// API endpoint to get user titles by state
+$app->get('/api/user/titles', function (Request $request, Response $response) {
+    if (!isset($_SESSION['user_id'])) {
+        $response->getBody()->write(json_encode(['error' => 'Unauthorized']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    $states = $request->getQueryParams()['states'] ?? 'watched,watching,stopped';
+    $statesArray = explode(',', $states);
+    
+    try {
+        $userTitle = new UserTitle();
+        $allTitles = [];
+        
+        foreach ($statesArray as $state) {
+            $titles = $userTitle->getUserTitlesByState($_SESSION['user_id'], trim($state), 100);
+            $allTitles = array_merge($allTitles, $titles);
+        }
+        
+        // Sort by most recently updated
+        usort($allTitles, function($a, $b) {
+            return strtotime($b['user_updated_at']) - strtotime($a['user_updated_at']);
+        });
+        
+        $response->getBody()->write(json_encode(['items' => $allTitles]));
+        return $response->withHeader('Content-Type', 'application/json');
+    } catch (\Exception $e) {
+        error_log("Get user titles error: " . $e->getMessage());
+        $response->getBody()->write(json_encode(['error' => 'Server error']));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+});
+
 $app->get('/lists/watched', function (Request $request, Response $response) {
     if (!isset($_SESSION['user_id'])) {
         return $response->withStatus(302)->withHeader('Location', '/');
@@ -371,15 +404,23 @@ $app->get('/lists/watched', function (Request $request, Response $response) {
     $user = new User();
     $userData = $user->findById($_SESSION['user_id']);
     
-    $listModel = new ListModel();
-    $watchedList = $listModel->getUserWatchedList($_SESSION['user_id']);
+    // Get all titles with watched, watching, or stopped status
+    $userTitle = new UserTitle();
+    $watchedTitles = [];
     
-    if (!$watchedList) {
-        $response->getBody()->write('<h1>Sett lista hittades inte</h1>');
-        return $response->withHeader('Content-Type', 'text/html');
+    // Get titles for each relevant state
+    $states = ['watched', 'watching', 'stopped'];
+    foreach ($states as $state) {
+        $titles = $userTitle->getUserTitlesByState($_SESSION['user_id'], $state, 100);
+        $watchedTitles = array_merge($watchedTitles, $titles);
     }
+    
+    // Sort by most recently updated
+    usort($watchedTitles, function($a, $b) {
+        return strtotime($b['user_updated_at']) - strtotime($a['user_updated_at']);
+    });
 
-    $content = getWatchedListHtml($userData, $watchedList);
+    $content = getWatchedListHtml($userData, $watchedTitles);
     $response->getBody()->write($content);
     return $response->withHeader('Content-Type', 'text/html');
 });
@@ -476,7 +517,7 @@ function getSharedHeaderHtml(array $user, bool $showSearch = true): string
                     </svg>
                 </button>
                 <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
-                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sett lista</a>
+                    <a href="/lists/watched" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Historik</a>
                     <form method="POST" action="/logout" class="block">
                         <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
                             Logga ut ' . htmlspecialchars($user['name']) . '
@@ -1256,7 +1297,7 @@ function getDashboardHtml(array $user): string
 </html>';
 }
 
-function getWatchedListHtml(array $user, array $watchedList): string
+function getWatchedListHtml(array $user, array $watchedTitles): string
 {
     return '<!DOCTYPE html>
 <html lang="sv">
@@ -1273,7 +1314,7 @@ function getWatchedListHtml(array $user, array $watchedList): string
             <div class="flex items-center space-x-4">
                 <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
                 <span class="text-gray-400">/</span>
-                <h1 class="text-2xl font-semibold text-gray-800">' . htmlspecialchars($watchedList['name']) . '</h1>
+                <h1 class="text-2xl font-semibold text-gray-800">Historik</h1>
             </div>
             <div class="relative" x-data="{ open: false }">
                 <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
@@ -1292,12 +1333,12 @@ function getWatchedListHtml(array $user, array $watchedList): string
             </div>
         </header>
         
-        <div class="bg-white rounded-lg shadow" x-data="watchedListApp(' . $watchedList['id'] . ')" x-init="loadItems()">
+        <div class="bg-white rounded-lg shadow" x-data="watchedListApp()" x-init="loadItems()">
             <div class="p-6">
                 <div class="flex justify-between items-center mb-6">
                     <div>
                         <h2 class="text-xl font-semibold text-gray-900">Sett titlar</h2>
-                        <p class="text-sm text-gray-500 mt-1" x-text="items.length + \' titlar\'"></p>
+                        <p class="text-sm text-gray-500 mt-1" x-text="items.length + \' titlar (sett, tittar, eller slutat)\'"></p>
                     </div>
                 </div>
                 
@@ -1322,8 +1363,13 @@ function getWatchedListHtml(array $user, array $watchedList): string
                                 <a :href="\'/title/\' + item.title_id" class="font-semibold text-gray-900 mb-1 hover:text-blue-600 cursor-pointer block" x-text="item.title"></a>
                                 <p class="text-sm text-gray-500 mb-2" x-text="getYear(item.release_date)"></p>
                                 <div class="flex items-center space-x-2 mb-2">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                        Sett
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" 
+                                          :class="{
+                                              \'bg-green-100 text-green-800\': item.state === \'watched\',
+                                              \'bg-blue-100 text-blue-800\': item.state === \'watching\',
+                                              \'bg-red-100 text-red-800\': item.state === \'stopped\'
+                                          }"
+                                          x-text="getStateText(item.state)">
                                     </span>
                                     <span x-show="item.rating" class="text-sm text-gray-600">
                                         ⭐ <span x-text="item.rating"></span>
@@ -1339,19 +1385,18 @@ function getWatchedListHtml(array $user, array $watchedList): string
     </div>
 
     <script>
-        function watchedListApp(listId) {
+        function watchedListApp() {
             return {
-                listId: listId,
                 items: [],
                 loading: true,
                 
                 async loadItems() {
                     try {
-                        const response = await fetch(`/api/lists/${this.listId}/items?state=watched`);
+                        const response = await fetch(\'/api/user/titles?states=watched,watching,stopped\');
                         const data = await response.json();
                         this.items = data.items || [];
                     } catch (error) {
-                        console.error(\'Failed to load watched items:\', error);
+                        console.error(\'Failed to load user titles:\', error);
                         this.items = [];
                     } finally {
                         this.loading = false;
@@ -1366,6 +1411,16 @@ function getWatchedListHtml(array $user, array $watchedList): string
                     } catch (e) {
                         return \'Okänt år\';
                     }
+                },
+                
+                getStateText(state) {
+                    const stateTexts = {
+                        \'want\': \'Vill se\',
+                        \'watching\': \'Tittar\',
+                        \'watched\': \'Sett\',
+                        \'stopped\': \'Slutat titta\'
+                    };
+                    return stateTexts[state] || state;
                 }
             }
         }
