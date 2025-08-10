@@ -65,18 +65,6 @@ class ListModel
     }
 
 
-    public function getUserDefaultList(int $userId): ?array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT l.* FROM lists l
-             JOIN list_owners lo ON l.id = lo.list_id
-             WHERE lo.user_id = ? AND l.is_default = TRUE
-             LIMIT 1"
-        );
-        
-        $stmt->execute([$userId]);
-        return $stmt->fetch() ?: null;
-    }
 
     public function isOwner(int $listId, int $userId): bool
     {
@@ -106,13 +94,6 @@ class ListModel
         return $stmt->execute([$listId, $userId]);
     }
 
-    public function removeOwner(int $listId, int $userId): bool
-    {
-        $stmt = $this->pdo->prepare(
-            "DELETE FROM list_owners WHERE list_id = ? AND user_id = ?"
-        );
-        return $stmt->execute([$listId, $userId]);
-    }
 
     public function getListOwners(int $listId): array
     {
@@ -126,25 +107,6 @@ class ListModel
         return $stmt->fetchAll();
     }
 
-    public function updateVisibility(int $listId, string $visibility): bool
-    {
-        $stmt = $this->pdo->prepare(
-            "UPDATE lists SET visibility = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        );
-        return $stmt->execute([$visibility, $listId]);
-    }
 
-    public function update(int $listId, string $name, string $description = ''): bool
-    {
-        $stmt = $this->pdo->prepare(
-            "UPDATE lists SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        );
-        return $stmt->execute([$name, $description, $listId]);
-    }
 
-    public function delete(int $listId): bool
-    {
-        $stmt = $this->pdo->prepare("DELETE FROM lists WHERE id = ?");
-        return $stmt->execute([$listId]);
-    }
 }

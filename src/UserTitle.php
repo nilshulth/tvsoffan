@@ -51,58 +51,7 @@ class UserTitle
         return $stmt->fetchAll();
     }
 
-    public function getUserStats(int $userId): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT state, COUNT(*) as count, AVG(rating) as avg_rating
-             FROM user_titles
-             WHERE user_id = ?
-             GROUP BY state"
-        );
-        $stmt->execute([$userId]);
-        
-        $stats = [
-            'want' => ['count' => 0, 'avg_rating' => null],
-            'watching' => ['count' => 0, 'avg_rating' => null],
-            'watched' => ['count' => 0, 'avg_rating' => null],
-            'stopped' => ['count' => 0, 'avg_rating' => null]
-        ];
-        
-        foreach ($stmt->fetchAll() as $row) {
-            $stats[$row['state']] = [
-                'count' => (int)$row['count'],
-                'avg_rating' => $row['avg_rating'] ? round((float)$row['avg_rating'], 1) : null
-            ];
-        }
-        
-        return $stats;
-    }
 
-    public function removeUserTitle(int $userId, int $titleId): bool
-    {
-        $stmt = $this->pdo->prepare(
-            "DELETE FROM user_titles WHERE user_id = ? AND title_id = ?"
-        );
-        return $stmt->execute([$userId, $titleId]);
-    }
 
-    public function getUserRecentActivity(int $userId, int $limit = 20): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT ut.*, t.*
-             FROM user_titles ut
-             JOIN titles t ON ut.title_id = t.id
-             WHERE ut.user_id = ?
-             ORDER BY ut.updated_at DESC
-             LIMIT ?"
-        );
-        $stmt->execute([$userId, $limit]);
-        return $stmt->fetchAll();
-    }
 
-    // Helper method to get watched titles (replaces the need for watched lists)
-    public function getUserWatchedTitles(int $userId, int $limit = 50, int $offset = 0): array
-    {
-        return $this->getUserTitlesByState($userId, 'watched', $limit, $offset);
-    }
 }

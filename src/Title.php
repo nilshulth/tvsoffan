@@ -88,48 +88,7 @@ class Title
         return $stmt->execute($values);
     }
 
-    public function search(string $query, int $limit = 20): array
-    {
-        $searchTerm = "%{$query}%";
-        $stmt = $this->pdo->prepare(
-            "SELECT * FROM titles 
-             WHERE title LIKE ? OR original_title LIKE ?
-             ORDER BY 
-                CASE WHEN title LIKE ? THEN 1 ELSE 2 END,
-                title
-             LIMIT ?"
-        );
-        
-        $stmt->execute([$searchTerm, $searchTerm, $searchTerm, $limit]);
-        return $stmt->fetchAll();
-    }
 
-    public function getPopular(int $limit = 20): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT t.*, COUNT(li.id) as usage_count
-             FROM titles t
-             LEFT JOIN list_items li ON t.id = li.title_id
-             GROUP BY t.id
-             ORDER BY usage_count DESC, t.created_at DESC
-             LIMIT ?"
-        );
-        
-        $stmt->execute([$limit]);
-        return $stmt->fetchAll();
-    }
 
-    public function delete(int $id): bool
-    {
-        $stmt = $this->pdo->prepare("DELETE FROM titles WHERE id = ?");
-        return $stmt->execute([$id]);
-    }
 
-    public function getImageUrl(?string $posterPath, string $size = 'w500'): ?string
-    {
-        if (empty($posterPath)) {
-            return null;
-        }
-        return "https://image.tmdb.org/t/p/{$size}{$posterPath}";
-    }
 }

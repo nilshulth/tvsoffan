@@ -20,45 +20,7 @@ class TmdbService
         ]);
     }
 
-    public function searchMovies(string $query, int $page = 1): array
-    {
-        try {
-            $response = $this->client->get('search/movie', [
-                'query' => [
-                    'api_key' => $this->apiKey,
-                    'query' => $query,
-                    'page' => $page,
-                    'language' => 'sv-SE',
-                ]
-            ]);
 
-            $data = json_decode($response->getBody(), true);
-            return $data ?: [];
-        } catch (GuzzleException $e) {
-            error_log("TMDB API error: " . $e->getMessage());
-            return [];
-        }
-    }
-
-    public function searchTvShows(string $query, int $page = 1): array
-    {
-        try {
-            $response = $this->client->get('search/tv', [
-                'query' => [
-                    'api_key' => $this->apiKey,
-                    'query' => $query,
-                    'page' => $page,
-                    'language' => 'sv-SE',
-                ]
-            ]);
-
-            $data = json_decode($response->getBody(), true);
-            return $data ?: [];
-        } catch (GuzzleException $e) {
-            error_log("TMDB API error: " . $e->getMessage());
-            return [];
-        }
-    }
 
     public function searchMulti(string $query, int $page = 1): array
     {
@@ -116,8 +78,4 @@ class TmdbService
         }
     }
 
-    public function getImageUrl(string $posterPath, string $size = 'w500'): string
-    {
-        return "https://image.tmdb.org/t/p/{$size}{$posterPath}";
-    }
 }

@@ -80,11 +80,11 @@ class User
         $listModel = new ListModel();
         
         // Create watched list (automatic)
-        $watchedListId = $listModel->create("Sett", $userId, "Automatisk lista över allt du har sett", 'public', false, true);
+        $watchedListId = $listModel->create("Sett", $userId, "Automatisk lista över allt du har sett", 'public', false);
         error_log("Created watched list with ID: " . $watchedListId);
         
         // Create default list (user's main list)
-        $defaultListId = $listModel->create("Min lista", $userId, "Din personliga lista", 'private', true, false);
+        $defaultListId = $listModel->create("Min lista", $userId, "Din personliga lista", 'private', true);
         error_log("Created default list with ID: " . $defaultListId);
     }
 }

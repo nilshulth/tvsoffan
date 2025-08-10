@@ -73,16 +73,6 @@ class ListItem
         return $stmt->fetchAll();
     }
 
-    public function getUserTitleInList(int $userId, int $titleId, int $listId): ?array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT li.* FROM list_items li
-             JOIN list_owners lo ON li.list_id = lo.list_id
-             WHERE lo.user_id = ? AND li.title_id = ? AND li.list_id = ?"
-        );
-        $stmt->execute([$userId, $titleId, $listId]);
-        return $stmt->fetch() ?: null;
-    }
 
 
 
@@ -94,11 +84,6 @@ class ListItem
         return $stmt->execute([$listId, $titleId]);
     }
 
-    public function delete(int $listItemId): bool
-    {
-        $stmt = $this->pdo->prepare("DELETE FROM list_items WHERE id = ?");
-        return $stmt->execute([$listItemId]);
-    }
 
 
 }
