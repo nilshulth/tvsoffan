@@ -1159,34 +1159,17 @@ function getWatchedListHtml(array $user, array $watchedTitles): string
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="max-w-6xl mx-auto py-8 px-4">
-        <header class="flex justify-between items-center mb-8">
-            <div class="flex items-center space-x-4">
-                <a href="/" class="text-3xl font-bold text-gray-900 hover:text-gray-700">tvsoffan</a>
-                <span class="text-gray-400">/</span>
-                <h1 class="text-2xl font-semibold text-gray-800">Historik</h1>
-            </div>
-            <div class="relative" x-data="{ open: false }">
-                <button @click="open = !open" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900 focus:outline-none">
-                    <span class="text-sm">' . htmlspecialchars($user['name']) . '</span>
-                    <svg class="w-4 h-4 transform transition-transform" :class="{ \'rotate-180\': open }" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                    </svg>
-                </button>
-                <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
-                    <form method="POST" action="/logout" class="block">
-                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
-                            Logga ut ' . htmlspecialchars($user['name']) . '
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </header>
+        ' . getSharedHeaderHtml($user, true) . '
         
-        <div class="bg-white rounded-lg shadow" x-data="watchedListApp()" x-init="loadItems()">
+        <div class="mb-8">
+            <h1 class="text-2xl font-semibold text-gray-800">Historik</h1>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow" x-data="{ ...searchApp(), ...watchedListApp() }" x-init="loadUserLists(); loadItems()">
             <div class="p-6">
                 <div class="flex justify-between items-center mb-6">
                     <div>
-                        <h2 class="text-xl font-semibold text-gray-900">Sett titlar</h2>
+                        <h2 class="text-xl font-semibold text-gray-900">Historik</h2>
                         <p class="text-sm text-gray-500 mt-1" x-text="items.length + \' titlar (sett, tittar, eller slutat)\'"></p>
                     </div>
                 </div>
@@ -1262,18 +1245,11 @@ function getWatchedListHtml(array $user, array $watchedTitles): string
                     }
                 },
                 
-                getStateText(state) {
-                    const stateTexts = {
-                        \'want\': \'Vill se\',
-                        \'watching\': \'Tittar\',
-                        \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat titta\'
-                    };
-                    return stateTexts[state] || state;
-                }
+                getStateText: TvSoffanUtils.getStateText
             }
         }
     </script>
+    ' . getSharedScriptJs() . '
 </body>
 </html>';
 }
