@@ -22,18 +22,17 @@ Det är svårt att minnas vad man sett, vad man vill se härnäst och vad kompis
 ### Icke‑mål
 - Inget tungt reviewsystem med långa texter, wikis eller forum
 - Ingen komplex katalog/metadata‑redigering av titlar
-- Ingen pirat-/streaming‑länk‑indexering
 
 ### Kärnfunktioner (MVP)
-- Logga titlar: Sett/Vill se. Information från TMDB.
+- Information från TMDB.
 - Betygsskala 1–5 + kort kommentar (valfritt)
 - Följ vänner, aktivitetsflöde
 - Delning av profil och listor (offentligt eller via länk)
 - Enkla listor
-    - En egen lista
+    - Egna listor
     - Delade listor (fler än en person kan ändra)
     - Följa andras listor
-    - Varje titel kan ha flera tillstånd (sett, vill se, tittar nu, slutat titta, etc.)
+    - Varje titel kan ha flera tillstånd (sett, vill se, tittar nu, slutat titta)
 
 ### Prioriterade utökningar
 - Must‑have: JustWatch för att lätt se vilken streamingtjänst som har en titel
@@ -66,15 +65,12 @@ Det är svårt att minnas vad man sett, vad man vill se härnäst och vad kompis
 - Andel följ‑relationer (densitet i nätverket)
 
 ### Roadmap (kort)
-- v0.1 MVP: sök, listor, användare, delningar, tillstånd på titlar
-- v0.2 Gemensamma listor, följ listor, följ personer, kommentarer, betyg
+- v0.1 MVP: sök, listor, användare, tillstånd på titlar, kommentarer, betyg, historik
+- v0.2 Gemensamma listor, följ listor, följ personer, delningar
 - v0.3 JustWatch, smarta listor, rekommendationer
 
-### Installation & utveckling
-- Status: under uppstart. Lägg till lokala körsteg här när stacken är satt.
-
 ### Licens
-- GPLv3
+- TBD
 
 ## Tech stack och arkitektur
 - **Backend**: PHP 8.3, Slim 4 (`slim/slim`), PSR-7 (`slim/psr7`), `vlucas/phpdotenv`, `guzzlehttp/guzzle`
