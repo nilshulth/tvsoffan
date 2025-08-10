@@ -8,10 +8,18 @@ composer.lock
 .env.local
 .env.production
 
-# Database
-*.sql
+# Database files
 *.sqlite
 *.db
+
+# Database dumps, backups, and generated data (but keep schema and migrations)
+*_dump.sql
+*_backup.sql
+backup_*.sql
+dump_*.sql
+data_*.sql
+export_*.sql
+temp_*.sql
 
 # IDE & Editors
 .vscode/

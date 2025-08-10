@@ -64,13 +64,6 @@ class ListModel
         return $list ?: null;
     }
 
-    // This method is no longer needed as watched functionality is handled by UserTitle class
-    // Keeping for backward compatibility during migration
-    public function getUserWatchedList(int $userId): ?array
-    {
-        // Return null as watched lists no longer exist
-        return null;
-    }
 
     public function getUserDefaultList(int $userId): ?array
     {

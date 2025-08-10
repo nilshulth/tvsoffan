@@ -28,13 +28,6 @@ class ListItem
         return $stmt->execute([$listId, $titleId]);
     }
 
-    // This method is no longer needed as state is handled by UserTitle class
-    // Keeping for backward compatibility during migration
-    public function update(int $listItemId, string $state, ?int $rating = null, string $comment = ''): bool
-    {
-        // This functionality is now handled by UserTitle::setState()
-        return true;
-    }
 
     public function findByListAndTitle(int $listId, int $titleId): ?array
     {
@@ -91,28 +84,7 @@ class ListItem
         return $stmt->fetch() ?: null;
     }
 
-    public function getUserWatchedTitles(int $userId, int $limit = 50, int $offset = 0): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT li.*, t.*, l.name as list_name
-             FROM list_items li
-             JOIN titles t ON li.title_id = t.id
-             JOIN lists l ON li.list_id = l.id
-             JOIN list_owners lo ON l.id = lo.list_id
-             WHERE lo.user_id = ? AND li.state = 'watched'
-             ORDER BY li.updated_at DESC
-             LIMIT ? OFFSET ?"
-        );
-        $stmt->execute([$userId, $limit, $offset]);
-        return $stmt->fetchAll();
-    }
 
-    public function markAsWatched(int $titleId, int $userId, ?int $rating = null, string $comment = ''): bool
-    {
-        // This functionality is now handled by UserTitle::setState()
-        $userTitle = new UserTitle();
-        return $userTitle->setState($userId, $titleId, 'watched', $rating, $comment);
-    }
 
     public function removeFromList(int $listId, int $titleId): bool
     {
@@ -128,49 +100,5 @@ class ListItem
         return $stmt->execute([$listItemId]);
     }
 
-    public function getStateCounts(int $listId): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT state, COUNT(*) as count 
-             FROM list_items 
-             WHERE list_id = ? 
-             GROUP BY state"
-        );
-        $stmt->execute([$listId]);
-        
-        $counts = ['want' => 0, 'watching' => 0, 'watched' => 0, 'stopped' => 0];
-        foreach ($stmt->fetchAll() as $row) {
-            $counts[$row['state']] = (int)$row['count'];
-        }
-        
-        return $counts;
-    }
 
-    public function getUserStats(int $userId): array
-    {
-        $stmt = $this->pdo->prepare(
-            "SELECT li.state, COUNT(*) as count, AVG(li.rating) as avg_rating
-             FROM list_items li
-             JOIN list_owners lo ON li.list_id = lo.list_id
-             WHERE lo.user_id = ?
-             GROUP BY li.state"
-        );
-        $stmt->execute([$userId]);
-        
-        $stats = [
-            'want' => ['count' => 0, 'avg_rating' => null],
-            'watching' => ['count' => 0, 'avg_rating' => null],
-            'watched' => ['count' => 0, 'avg_rating' => null],
-            'stopped' => ['count' => 0, 'avg_rating' => null]
-        ];
-        
-        foreach ($stmt->fetchAll() as $row) {
-            $stats[$row['state']] = [
-                'count' => (int)$row['count'],
-                'avg_rating' => $row['avg_rating'] ? round((float)$row['avg_rating'], 1) : null
-            ];
-        }
-        
-        return $stats;
-    }
 }
