@@ -81,3 +81,29 @@ Det är svårt att minnas vad man sett, vad man vill se härnäst och vad kompis
 ### Simplicity Constraints
 - No build step (CDN assets), no queues/workers, no microservices
 - Small codebase, minimal dependencies, straightforward CRUD
+
+## Future Refactoring Ideas
+
+### 1. Extract JavaScript to Separate File
+**Current:** Inline JavaScript in PHP strings within index.php  
+**Future:** Move to `public/js/app.js` for better syntax highlighting and editing  
+**Benefit:** Cleaner separation, easier JavaScript development  
+**Note:** No build step required - simple `<script src="/js/app.js">` include
+
+### 2. Move HTML to Template Files
+**Current:** HTML generation functions in index.php  
+**Future:** Create `templates/` directory with separate `.php` template files  
+**Benefit:** Better HTML syntax highlighting, easier template editing  
+**Implementation:** Simple PHP includes, no templating engine needed
+
+### 3. Add Validation Helper Class
+**Current:** Scattered validation logic in route handlers  
+**Future:** Centralized `Validator` class with reusable validation methods  
+**Benefit:** Consistent error messages, DRY principle, cleaner routes  
+**Example:** `Validator::required()`, `Validator::email()`, etc.
+
+### 4. Extract Service Layer
+**Current:** Business logic mixed in route handlers  
+**Future:** Service classes for complex operations (TitleService, ListService)  
+**Benefit:** Testable business logic, reusable operations, cleaner routes  
+**When:** Consider when individual routes exceed ~50 lines or logic gets complex

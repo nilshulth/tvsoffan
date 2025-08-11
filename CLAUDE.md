@@ -24,6 +24,9 @@ php -S localhost:8000 -t public/
 - Schema file: `schema.sql`
 - Connection via PDO in `src/Database.php`
 
+**Git:**
+- Combine git add and git commit into a single command: `git add . && git commit -m "message"`
+
 ## Architecture Notes
 
 See README.md for the complete tech stack. Key points for development:

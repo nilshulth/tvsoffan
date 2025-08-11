@@ -534,6 +534,16 @@ function getSharedScriptJs(): string
                     \'stopped\': \'Slutat titta\'
                 };
                 return stateTexts[state] || state;
+            },
+            
+            getYear(releaseDate) {
+                if (!releaseDate) return \'Okänt år\';
+                try {
+                    const year = new Date(releaseDate).getFullYear();
+                    return isNaN(year) ? \'Okänt år\' : year.toString();
+                } catch (e) {
+                    return \'Okänt år\';
+                }
             }
         };
 
@@ -725,16 +735,7 @@ function getSharedScriptJs(): string
                 },
                 
                 getStateText: TvSoffanUtils.getStateText,
-                
-                getYear(releaseDate) {
-                    if (!releaseDate) return \'Okänt år\';
-                    try {
-                        const year = new Date(releaseDate).getFullYear();
-                        return isNaN(year) ? \'Okänt år\' : year.toString();
-                    } catch (e) {
-                        return \'Okänt år\';
-                    }
-                },
+                getYear: TvSoffanUtils.getYear,
                 
                 async createNewList() {
                     if (!this.newListName.trim()) return;
@@ -1125,16 +1126,7 @@ function getWatchedListHtml(array $user, array $watchedTitles): string
                     }
                 },
                 
-                getYear(releaseDate) {
-                    if (!releaseDate) return \'Okänt år\';
-                    try {
-                        const year = new Date(releaseDate).getFullYear();
-                        return isNaN(year) ? \'Okänt år\' : year.toString();
-                    } catch (e) {
-                        return \'Okänt år\';
-                    }
-                },
-                
+                getYear: TvSoffanUtils.getYear,
                 getStateText: TvSoffanUtils.getStateText
             }
         }
@@ -1473,15 +1465,7 @@ function getTitleDetailHtml(array $user, array $titleData): string
                     }
                 },
                 
-                getStateText(state) {
-                    const stateTexts = {
-                        \'want\': \'Vill se\',
-                        \'watching\': \'Tittar\',
-                        \'watched\': \'Sett\',
-                        \'stopped\': \'Slutat titta\'
-                    };
-                    return stateTexts[state] || state;
-                }
+                getStateText: TvSoffanUtils.getStateText
             }
         }
     </script>
