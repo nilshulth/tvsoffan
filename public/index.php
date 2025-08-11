@@ -194,14 +194,18 @@ $app->post('/api/titles/update/{title_id}', function (Request $request, Response
             return ResponseHelper::jsonError($response, 'Access denied', 403);
         }
 
-        // Update user title state (no longer tied to specific list)
-        $userTitle = new UserTitle();
-        $success = $userTitle->setState($user['id'], $titleId, $state, $rating, $comment);
+        // Add to list (if not already there)
+        $listItem = new ListItem();
+        $listSuccess = $listItem->addToList($listId, $titleId);
 
-        if ($success) {
+        // Update user title state (separate from list membership)
+        $userTitle = new UserTitle();
+        $stateSuccess = $userTitle->setState($user['id'], $titleId, $state, $rating, $comment);
+
+        if ($listSuccess && $stateSuccess) {
             return ResponseHelper::jsonSuccess($response, ['success' => true]);
         } else {
-            return ResponseHelper::jsonError($response, 'Failed to update title state', 500);
+            return ResponseHelper::jsonError($response, 'Failed to add to list or update state', 500);
         }
 
     } catch (\Exception $e) {
