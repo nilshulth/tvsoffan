@@ -7,14 +7,14 @@ use PDO;
 class ListModel extends BaseModel
 {
 
-    public function create(string $name, int $createdBy, string $description = '', string $visibility = 'private', bool $isDefault = false): int
+    public function create(string $name, int $createdBy, string $description = '', string $visibility = 'private'): int
     {
         $stmt = $this->pdo->prepare(
-            "INSERT INTO lists (name, description, visibility, is_default, created_by) 
-             VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO lists (name, description, visibility, created_by) 
+             VALUES (?, ?, ?, ?)"
         );
         
-        $stmt->execute([$name, $description, $visibility, $isDefault ? 1 : 0, $createdBy]);
+        $stmt->execute([$name, $description, $visibility, $createdBy]);
         $listId = $this->pdo->lastInsertId();
 
         $this->addOwner($listId, $createdBy);
@@ -30,7 +30,7 @@ class ListModel extends BaseModel
              FROM lists l
              JOIN list_owners lo ON l.id = lo.list_id
              WHERE lo.user_id = ?
-             ORDER BY l.is_default DESC, l.created_at DESC"
+             ORDER BY l.created_at DESC"
         );
         
         $stmt->execute([$userId]);

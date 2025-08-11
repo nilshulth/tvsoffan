@@ -321,8 +321,7 @@ $app->post('/api/lists', function (Request $request, Response $response) {
             $data['name'],
             $user['id'],
             $data['description'] ?? '',
-            $data['visibility'] ?? 'private',
-            $data['is_default'] ?? false
+            $data['visibility'] ?? 'private'
         );
 
         return ResponseHelper::jsonSuccess($response, [
@@ -605,14 +604,16 @@ function getSharedScriptJs(): string
                         await this.loadUserLists();
                     }
                     
-                    const defaultList = this.userLists.find(list => list.is_default == 1);
-                    if (!defaultList) {
-                        alert(\'Du har ingen standardlista för att lägga till titlar\');
+                    if (this.userLists.length === 0) {
+                        alert(\'Du måste skapa en lista först för att lägga till titlar\');
                         return;
                     }
                     
+                    // Use the first available list
+                    const firstList = this.userLists[0];
+                    
                     const requestBody = {
-                        list_id: defaultList.id,
+                        list_id: firstList.id,
                         state: \'want\'
                     };
                     
@@ -643,16 +644,18 @@ function getSharedScriptJs(): string
                         await this.loadUserLists();
                     }
                     
-                    const defaultList = this.userLists.find(list => list.is_default == 1);
-                    if (!defaultList) {
-                        alert(\'Du har ingen standardlista för att lägga till titlar\');
+                    if (this.userLists.length === 0) {
+                        alert(\'Du måste skapa en lista först för att lägga till titlar\');
                         return;
                     }
+                    
+                    // Use the first available list
+                    const firstList = this.userLists[0];
                     
                     const requestBody = {
                         tmdb_id: item.id,
                         media_type: item.media_type || \'movie\',
-                        list_id: defaultList.id,
+                        list_id: firstList.id,
                         state: \'want\',
                         rating: null,
                         comment: \'\'
@@ -747,8 +750,7 @@ function getSharedScriptJs(): string
                     const requestBody = {
                         name: this.newListName.trim(),
                         description: this.newListDescription.trim(),
-                        visibility: this.newListVisibility,
-                        is_default: false
+                        visibility: this.newListVisibility
                     };
                     
                     try {

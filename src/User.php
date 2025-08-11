@@ -73,12 +73,8 @@ class User extends BaseModel
     {
         $listModel = new ListModel();
         
-        // Create watched list (automatic)
-        $watchedListId = $listModel->create("Sett", $userId, "Automatisk lista över allt du har sett", 'public', false);
-        error_log("Created watched list with ID: " . $watchedListId);
-        
-        // Create default list (user's main list)
-        $defaultListId = $listModel->create("Min lista", $userId, "Din personliga lista", 'private', true);
-        error_log("Created default list with ID: " . $defaultListId);
+        // Create user's main list (no longer marked as default)
+        $listId = $listModel->create("Min lista", $userId, "Din personliga lista", 'private');
+        error_log("Created list with ID: " . $listId);
     }
 }

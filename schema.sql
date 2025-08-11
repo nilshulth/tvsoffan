@@ -44,13 +44,11 @@ CREATE TABLE lists (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     visibility ENUM('public', 'private') NOT NULL DEFAULT 'private',
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_by INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     
     INDEX idx_visibility (visibility),
-    INDEX idx_is_default (is_default),
     INDEX idx_created_by (created_by),
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
