@@ -1,0 +1,8 @@
+RewriteEngine On
+
+# Handle Angular and other client-side routes
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Route all requests to index.php
+RewriteRule ^ index.php [QSA,L]
