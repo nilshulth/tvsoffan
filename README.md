@@ -70,7 +70,7 @@ Det är svårt att minnas vad man sett, vad man vill se härnäst och vad kompis
 - v0.3 JustWatch, smarta listor, rekommendationer
 
 ### Licens
-- TBD
+- GPL-3.0-or-later
 
 ## Tech stack och arkitektur
 - **Backend**: PHP 8.3, Slim 4 (`slim/slim`), PSR-7 (`slim/psr7`), `vlucas/phpdotenv`, `guzzlehttp/guzzle`
